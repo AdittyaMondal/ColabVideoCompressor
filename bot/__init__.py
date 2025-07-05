@@ -1,44 +1,20 @@
-import asyncio
-import glob
-import inspect
-import io
-import itertools
-import json
-import math
-import os
-import re
-import shutil
-import signal
-import subprocess
-import sys
-import time
-import traceback
-from datetime import datetime as dt
-from logging import DEBUG, INFO, basicConfig, getLogger, warning
-from pathlib import Path
+from telethon import TelegramClient
 
-import aiohttp
-import psutil
-import pymediainfo
-import requests
-from html_telegraph_poster import TelegraphPoster
-from telethon import Button, TelegramClient, errors, events, functions, types
-from telethon.sessions import StringSession
-from telethon.utils import pack_bot_file_id
-
-from .config import *
-
-basicConfig(format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s", level=INFO)
-LOGS = getLogger(__name__)
+# Import from config which is now the base for LOGS and settings
+from .config import (
+    LOGS, APP_ID, API_HASH, BOT_TOKEN, OWNER, GPU_TYPE, V_CODEC, V_PRESET, V_QP,
+    V_SCALE, V_FPS, A_BITRATE, WATERMARK_ENABLED, FILENAME_TEMPLATE,
+    AUTO_DELETE_ORIGINAL, ENABLE_HARDWARE_ACCELERATION
+)
 
 try:
+    if not all([APP_ID, API_HASH, BOT_TOKEN, OWNER]):
+        LOGS.critical("One or more required environment variables (APP_ID, API_HASH, BOT_TOKEN, OWNER) are missing.")
+        exit(1)
     bot = TelegramClient(None, APP_ID, API_HASH)
-    LOGS.info("Bot client created successfully")
 except Exception as e:
-    LOGS.info("Environment vars are missing! Kindly recheck.")
-    LOGS.info("Bot is quiting...")
-    LOGS.info(str(e))
-    exit()
+    LOGS.error("Could not create Bot client.", exc_info=True)
+    exit(1)
 
 async def startup():
     """Send startup message to bot owners and log config"""
@@ -51,7 +27,9 @@ async def startup():
     LOGS.info(f"Auto-delete Original: {AUTO_DELETE_ORIGINAL}")
     LOGS.info("---------------------")
 
-    for x in OWNER.split():
+    owners = [owner_id.strip() for owner_id in OWNER.split()]
+    for x in owners:
+        if not x: continue
         try:
             await bot.send_message(
                 int(x),

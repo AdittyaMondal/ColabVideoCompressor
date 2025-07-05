@@ -6,14 +6,18 @@ import os
 import re
 from pathlib import Path
 from collections import OrderedDict
-from . import LOGS
-from .config import *
 from datetime import datetime as dt
-from telethon import errors, Button
-from html_telegraph_poster import TelegraphPoster
-import pymediainfo
 import psutil
 import aiohttp
+import pymediainfo
+from telethon import errors, Button
+from html_telegraph_poster import TelegraphPoster
+
+# Import explicitly from config module
+from .config import (
+    LOGS, MAX_QUEUE_SIZE, IS_COLAB, COLAB_OUTPUT_DIR, GPU_TYPE,
+    MAX_FILE_SIZE, PROGRESS_UPDATE_INTERVAL
+)
 
 class BotState:
     """State management for the bot."""
@@ -134,6 +138,9 @@ async def progress(current, total, event, start, type_of_ps, file=None):
 
 async def info(file_path):
     try:
+        if not validate_file_path(file_path):
+            LOGS.warning(f"Skipping mediainfo for invalid path: {file_path}")
+            return None
         return pymediainfo.MediaInfo.parse(file_path, output="HTML", full=False)
     except Exception as e:
         LOGS.error(f"Pymediainfo failed for {file_path}: {e}")
@@ -155,7 +162,6 @@ async def skip(e):
         bot_state.clear_working()
         await e.edit("`⛔ Process cancelled by user.`", buttons=None)
         
-        # Find and terminate the correct ffmpeg process
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             if proc.info['name'] == "ffmpeg" and dl in ' '.join(proc.info.get('cmdline', [])):
                 LOGS.info(f"Terminating ffmpeg process {proc.pid} for {dl}")
@@ -163,9 +169,10 @@ async def skip(e):
         
         for f in [dl, out]:
             if f and os.path.exists(f) and validate_file_path(f):
-                os.remove(f)
+                try: os.remove(f)
+                except OSError as ex: LOGS.error(f"Error removing file {f} on skip: {ex}")
     except Exception as ex:
-        LOGS.error(f"Error in skip function: {ex}")
+        LOGS.error(f"Error in skip function: {ex}", exc_info=True)
         await e.answer(f"Error cancelling: {ex}", alert=True)
 
 async def stats(e):
@@ -178,8 +185,8 @@ async def stats(e):
         
         out_path, dl_path, _ = wh.split(";")
         
-        original_size = os.path.getsize(dl_path) if os.path.exists(dl_path) else 0
-        current_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+        original_size = os.path.getsize(dl_path) if os.path.exists(dl_path) and validate_file_path(dl_path) else 0
+        current_size = os.path.getsize(out_path) if os.path.exists(out_path) and validate_file_path(out_path) else 0
         
         reduction = (100 - (current_size / original_size * 100)) if original_size > 0 else 0
         
@@ -191,6 +198,7 @@ async def stats(e):
             alert=True
         )
     except Exception as ex:
+        LOGS.error(f"Error getting stats: {ex}", exc_info=True)
         await e.answer(f"Error getting stats: {ex}", alert=True)
 
 async def fast_download(e, download_url, filename=None):

@@ -1,13 +1,23 @@
 import os
 import re
+import subprocess
 from decouple import config
+from logging import INFO, basicConfig, getLogger
+
+# --- LOGGING SETUP ---
+# Define logger here to be importable by all other modules without circular deps
+basicConfig(
+    format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s",
+    level=INFO,
+    datefmt="%d-%b-%y %H:%M:%S"
+)
+LOGS = getLogger("CompressorBot")
 
 # --- CORE API & BOT SETTINGS ---
 APP_ID = config("APP_ID", cast=int)
 API_HASH = config("API_HASH")
 BOT_TOKEN = config("BOT_TOKEN")
-OWNER = config("OWNER")
-THUMBNAIL = config("THUMBNAIL", default="https://graph.org/file/75ee20ec8d8c8bba84f02.jpg")
+OWNER = config("OWNER", default="")
 
 # --- FILE & QUEUE SETTINGS ---
 MAX_FILE_SIZE = config("MAX_FILE_SIZE", default=4000, cast=int)
@@ -20,12 +30,10 @@ ENABLE_HARDWARE_ACCELERATION = config("ENABLE_HARDWARE_ACCELERATION", default=Tr
 PROGRESS_UPDATE_INTERVAL = config("PROGRESS_UPDATE_INTERVAL", default=5, cast=int)
 
 def detect_gpu():
-    """Detect NVIDIA GPU, respecting the hardware acceleration toggle."""
     if not ENABLE_HARDWARE_ACCELERATION:
         return "cpu"
     try:
-        # Use a more reliable check that doesn't print to stdout
-        if subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0:
+        if subprocess.run(["nvidia-smi"], capture_output=True, check=False).returncode == 0:
             return "nvidia"
     except (FileNotFoundError, Exception):
         pass
@@ -57,4 +65,4 @@ TELEGRAPH_API = config("TELEGRAPH_API", default="https://api.telegra.ph")
 ENABLE_EVAL = config("ENABLE_EVAL", default=False, cast=bool)
 ENABLE_BASH = config("ENABLE_BASH", default=False, cast=bool)
 
-print("✅ Configuration Loaded Successfully")
+LOGS.info("✅ Configuration Loaded Successfully")

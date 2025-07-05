@@ -3,18 +3,14 @@ import sys
 import asyncio
 import re
 from datetime import datetime as dt
-
-from . import (
-    LOGS, bot, bot_state, uptime, BOT_TOKEN, OWNER, MAX_QUEUE_SIZE, GPU_TYPE
-)
-from .worker import (
-    process_link_download, process_file_encoding, encod, dl_link
-)
-from .funcn import (
-    cleanup_temp_files, periodic_cleanup, ts, skip, stats, code, decode
-)
-from .stuff import start, up, help, usage, ihelp, beck
 from telethon import events
+
+# Import from the correct, specific modules
+from .config import LOGS, BOT_TOKEN, OWNER, MAX_QUEUE_SIZE, GPU_TYPE
+from . import bot, startup
+from .funcn import bot_state, uptime, cleanup_temp_files, periodic_cleanup, ts, skip, stats
+from .worker import process_link_download, process_file_encoding, encod, dl_link
+from .stuff import start, up, help, usage, ihelp, beck
 
 LOGS.info("Starting Enhanced Video Compressor Bot...")
 
@@ -54,7 +50,7 @@ async def _(e): await dl_link(e)
 
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):
-    if str(e.sender_id) not in OWNER: return
+    if str(e.sender_id) not in OWNER.split(): return
     status_msg = (
         f"🤖 **Bot Status**\n\n"
         f"🔧 **Working**: {'Yes' if bot_state.is_working() else 'No'}\n"
@@ -83,7 +79,7 @@ async def _(e): await beck(e)
 
 # --- Media Handler ---
 
-@bot.on(events.NewMessage(incoming=True, func=lambda e: e.media and str(e.sender_id) in OWNER))
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.media and str(e.sender_id) in OWNER.split()))
 async def _(e): await encod(e)
 
 # --- Queue Processor ---
@@ -99,7 +95,6 @@ async def queue_processor():
                 
                 LOGS.info(f"Processing item '{key}' from queue.")
 
-                # Check if it's a link command or a media message
                 if hasattr(original_event, 'text') and original_event.text and original_event.text.startswith('/link'):
                     parts = original_event.text.split(maxsplit=2)
                     if len(parts) < 2:
@@ -123,14 +118,11 @@ async def queue_processor():
 # --- Main Execution ---
 
 async def main():
-    # Import startup function here to avoid early import issues
-    from . import startup
-    
     try:
         cleanup_task = asyncio.create_task(periodic_cleanup())
         queue_task = asyncio.create_task(queue_processor())
         
-        await startup() # Send startup message and log config
+        await startup()
         
         LOGS.info("Bot has started successfully and is listening for commands.")
         
