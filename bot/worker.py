@@ -1,7 +1,6 @@
 from .FastTelethon import download_file, upload_file
 from .funcn import *
 
-
 async def stats(e):
     try:
         wah = e.pattern_match.group(1).decode("UTF-8")
@@ -54,7 +53,6 @@ async def dl_link(event):
     await process_link_download(event, link, name)
 
 async def process_link_download(event, link, name):
-    """Process link download with retry mechanism"""
     bot_state.set_working(True)
     s = dt.now()
     xxx = await event.reply(f"`Analysing link...`")
@@ -85,7 +83,6 @@ async def encod(event):
         if not hasattr(event.media, "document") or not event.media.document.mime_type.startswith("video"):
             return
 
-        # Check for already compressed files
         if event.fwd_from:
             me_id = (await event.client.get_me()).id
             if hasattr(event.fwd_from.from_id, 'user_id') and event.fwd_from.from_id.user_id == me_id:
@@ -115,7 +112,6 @@ async def encod(event):
 
 
 async def process_file_encoding(event):
-    """Process file encoding with retry mechanism"""
     bot_state.set_working(True)
     xxx = await event.reply("`Preparing to download...`")
     s = dt.now()
@@ -149,16 +145,17 @@ async def process_file_encoding(event):
 
 
 async def process_compression(event, dl, start_time):
-    """Common compression processing logic"""
+    """Common compression processing logic with dynamic command building."""
     out = None
     try:
-        es = dt.now()
+        # Mark download end time / compression start time
+        compress_start_time = dt.now()
         original_name = Path(dl).stem
+        os.makedirs("encode/", exist_ok=True)
         out = f"encode/{original_name}_compressed.mkv"
         
-        dtime = ts(int((es - start_time).total_seconds()) * 1000)
+        dtime = ts(int((compress_start_time - start_time).total_seconds()) * 1000)
         
-        # Using event.id to ensure the button payload is unique to the message
         unique_id = event.id
         hehe = f"{out};{dl};{unique_id}"
         wah = code(hehe)
@@ -171,14 +168,30 @@ async def process_compression(event, dl, start_time):
                 [Button.inline("❌ CANCEL", data=f"skip{wah}")],
             ],
         )
+
+        # === DYNAMIC FFMPEG COMMAND BUILDING ===
+        scale_filter = f'-vf scale=-2:{V_SCALE}' if V_SCALE != -1 else ''
         
-        cmd = FFMPEG.format(dl, out)
+        if GPU_TYPE == "nvidia":
+            cmd = (
+                f'ffmpeg -y -hide_banner -loglevel error -hwaccel cuda -i "{dl}" '
+                f'-c:v hevc_nvenc -preset {V_PRESET} -rc constqp -qp {V_QP} {scale_filter} '
+                f'-c:a aac -b:a {A_BITRATE} -movflags +faststart "{out}"'
+            )
+        else: # Fallback for CPU
+            cmd = (
+                f'ffmpeg -y -hide_banner -loglevel error -i "{dl}" '
+                f'-c:v libx264 -preset veryfast -crf {V_QP} {scale_filter} '
+                f'-c:a aac -b:a {A_BITRATE} -movflags +faststart "{out}"'
+            )
+        # =========================================
+
         LOGS.info(f"Executing FFmpeg command: {cmd}")
         
         process = await asyncio.create_subprocess_shell(
             cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await process.communicate()
+        _, stderr = await process.communicate()
         
         if process.returncode != 0:
             er = stderr.decode()
@@ -187,40 +200,42 @@ async def process_compression(event, dl, start_time):
             return
 
         if not os.path.exists(out) or os.path.getsize(out) == 0:
-            await event.edit("❌ **COMPRESSION FAILED** - Output file not created or is empty.")
+            await event.edit("❌ **COMPRESSION FAILED**\nOutput file not created or is empty.")
             return
         
-        await upload_compressed_file(event, nn, dl, out, dtime, start_time)
+        await upload_compressed_file(event, nn, dl, out, dtime, compress_start_time)
         
     except Exception as e:
         LOGS.error(f"Compression process error: {e}")
         await event.edit(f"❌ **COMPRESSION ERROR**: `{str(e)}`")
     finally:
-        # Cleanup both files
         for f in [dl, out]:
             if f and os.path.exists(f) and validate_file_path(f):
                 os.remove(f)
 
-async def upload_compressed_file(event, nn, dl, out, dtime, start_time):
-    """Upload compressed file with progress tracking"""
+async def upload_compressed_file(event, nn, dl, out, dtime, compress_start_time):
+    """Upload compressed file with progress tracking and accurate timing."""
     try:
-        ees = dt.now()
-        ttt = time.time()
+        # Mark compression end time / upload start time
+        compress_end_time = dt.now()
+        comp_time = ts(int((compress_end_time - compress_start_time).total_seconds()) * 1000)
+        
         await nn.delete()
         nnn = await event.client.send_message(event.chat_id, "`Preparing to upload...`")
         
         upload_name = Path(out).name
+        upload_start_time = time.time()
         with open(out, "rb") as f:
             ok = await upload_file(
                 client=event.client,
                 file=f,
                 name=upload_name,
-                progress_callback=lambda d, t: progress(d, t, nnn, ttt, "Uploading File", upload_name)
+                progress_callback=lambda d, t: progress(d, t, nnn, upload_start_time, "Uploading File", upload_name)
             )
         
+        upload_time = ts(int((time.time() - upload_start_time) * 1000))
         await nnn.delete()
 
-        # Download thumbnail if it doesn't exist
         if not os.path.exists("thumb.jpg"):
              os.system(f"wget {THUMB} -O thumb.jpg")
 
@@ -230,17 +245,10 @@ async def upload_compressed_file(event, nn, dl, out, dtime, start_time):
             event.chat_id, file=ok, force_document=True, thumb=thumb_path, caption=f"`{upload_name}`"
         )
         
-        # Calculate stats
         org_size = os.path.getsize(dl)
         com_size = os.path.getsize(out)
         reduction = 100 - ((com_size / org_size) * 100) if org_size > 0 else 0
         
-        eees = dt.now()
-        ctime = ts(int((ees - ees).total_seconds()) * 1000) # This seems incorrect, let's fix
-        comp_time = ts(int((ees - start_time).total_seconds() * 1000) - int(dtime.replace('s',''))*1000)
-        upload_time = ts(int((dt.now() - ees).total_seconds()) * 1000)
-
-        # Generate mediainfo links
         info_before = await info(dl, event)
         info_after = await info(out, event)
         
@@ -264,3 +272,13 @@ async def upload_compressed_file(event, nn, dl, out, dtime, start_time):
     except Exception as e:
         LOGS.error(f"Upload error: {e}")
         await event.edit(f"❌ **UPLOAD ERROR**: `{str(e)}`")
+
+def cleanup_files(file_paths):
+    """Safely cleanup files"""
+    for file_path in file_paths:
+        try:
+            if os.path.exists(file_path) and validate_file_path(file_path):
+                os.remove(file_path)
+                LOGS.info(f"Cleaned up: {file_path}")
+        except Exception as e:
+            LOGS.error(f"Cleanup error for {file_path}: {e}")
