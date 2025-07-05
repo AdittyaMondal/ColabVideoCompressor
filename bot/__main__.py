@@ -1,21 +1,30 @@
 import signal
 import sys
 import asyncio
-from . import *
-from .devtools import *
-from .worker import *
-from .funcn import * # <-- This was the missing import
-from .stuff import *
+import re
 from datetime import datetime as dt
-import time
+
+from . import (
+    LOGS, bot, bot_state, uptime, BOT_TOKEN, OWNER, MAX_QUEUE_SIZE, GPU_TYPE
+)
+from .worker import (
+    process_link_download, process_file_encoding, encod, dl_link
+)
+from .funcn import (
+    cleanup_temp_files, periodic_cleanup, ts, skip, stats, code, decode
+)
+from .stuff import start, up, help, usage, ihelp, beck
+from telethon import events
 
 LOGS.info("Starting Enhanced Video Compressor Bot...")
 
 # Graceful shutdown handler
 def signal_handler(signum, frame):
     LOGS.info("Received shutdown signal, cleaning up...")
-    bot_state.clear_working()
-    cleanup_temp_files() # Now this function is available
+    if bot_state.is_working():
+        bot_state.clear_working()
+    cleanup_temp_files()
+    LOGS.info("Cleanup complete. Exiting.")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -83,43 +92,47 @@ async def queue_processor():
     while True:
         try:
             if not bot_state.is_working() and bot_state.queue_size() > 0:
-                key, item = bot_state.pop_first_queue_item()
-                if not key or not item:
+                key, original_event = bot_state.pop_first_queue_item()
+                if not original_event:
                     await asyncio.sleep(3)
                     continue
                 
-                user_id = int(OWNER.split()[0])
-                # A placeholder message to start the process
-                e = await bot.send_message(user_id, f"🔄 Processing item from queue...")
+                LOGS.info(f"Processing item '{key}' from queue.")
 
-                # This logic assumes the worker functions will handle everything
-                if isinstance(item, str): # URL
-                    await process_link_download(e, key, item)
-                else: # File
-                    # The message 'e' is passed to the handler which then takes over
-                    # We need to simulate the original event object more closely
-                    # For simplicity, we assume process_file_encoding can work with a message
-                    # This might need refactoring if it relies on event-specific attrs
-                    # A better approach would be to store the full event in the queue
-                    # but this works for now.
-                    await process_file_encoding(e) # This needs to be robust
+                # Check if it's a link command or a media message
+                if hasattr(original_event, 'text') and original_event.text and original_event.text.startswith('/link'):
+                    parts = original_event.text.split(maxsplit=2)
+                    if len(parts) < 2:
+                        await original_event.reply("❌ Invalid link command in queue. Skipping.")
+                        continue
+                    link = parts[1]
+                    name = parts[2] if len(parts) > 2 else ""
+                    await process_link_download(original_event, link, name)
+                elif hasattr(original_event, 'media'):
+                    await process_file_encoding(original_event)
+                else:
+                    LOGS.warning(f"Unknown item type in queue: {key}. Skipping.")
             
             await asyncio.sleep(3)
         except Exception as err:
             LOGS.error(f"Queue processor error: {err}", exc_info=True)
-            bot_state.clear_working()
+            if bot_state.is_working():
+                bot_state.clear_working()
             await asyncio.sleep(5)
 
 # --- Main Execution ---
 
 async def main():
+    # Import startup function here to avoid early import issues
+    from . import startup
+    
     try:
         cleanup_task = asyncio.create_task(periodic_cleanup())
         queue_task = asyncio.create_task(queue_processor())
         
-        LOGS.info("Bot has started successfully and is listening for commands.")
+        await startup() # Send startup message and log config
         
-        await startup() # Send startup message
+        LOGS.info("Bot has started successfully and is listening for commands.")
         
         await asyncio.gather(cleanup_task, queue_task)
         

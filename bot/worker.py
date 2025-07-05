@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from .FastTelethon import download_file, upload_file
 from .funcn import *
+from .config import *
+from telethon import Button
 from html_telegraph_poster import TelegraphPoster
 
 def get_watermark_filter():
@@ -34,10 +36,14 @@ async def process_compression(event, dl, start_time):
         original_name = Path(dl).stem
         os.makedirs("encode/", exist_ok=True)
         
+        # Dynamic filename generation
         filename_map = {
-            'original_name': original_name, 'preset': FILENAME_PRESET,
-            'resolution': FILENAME_RESOLUTION, 'codec': FILENAME_CODEC,
-            'date': FILENAME_DATE, 'time': FILENAME_TIME,
+            'original_name': original_name,
+            'preset': V_PRESET,
+            'resolution': f"{V_SCALE}p" if V_SCALE > 0 else "source",
+            'codec': V_CODEC.replace("_nvenc", "").replace("lib", ""),
+            'date': compress_start_time.strftime("%Y-%m-%d"),
+            'time': compress_start_time.strftime("%H-%M-%S"),
         }
         new_filename_base = FILENAME_TEMPLATE.format(**filename_map)
         sanitized_filename = re.sub(r'[\\/*?:"<>|]', "", new_filename_base)
@@ -62,7 +68,7 @@ async def process_compression(event, dl, start_time):
         vf_string = f'-vf "{",".join(video_filters)}"' if video_filters else ""
 
         cmd = f'ffmpeg -y -hide_banner -loglevel error'
-        if GPU_TYPE == "nvidia": cmd += ' -hwaccel cuda'
+        if GPU_TYPE == "nvidia": cmd += ' -hwaccel cuda -hwaccel_output_format cuda'
         
         cmd += f' -i "{dl}" -c:v {V_CODEC} -preset {V_PRESET} -profile:v {V_PROFILE} -level:v {V_LEVEL}'
         
@@ -86,10 +92,16 @@ async def process_compression(event, dl, start_time):
         LOGS.error(f"Compression process error: {e}", exc_info=True)
         await event.edit(f"❌ **COMPRESSION ERROR**: `{str(e)}`")
     finally:
+        successful_compression = process and process.returncode == 0
         files_to_delete = []
-        if out and os.path.exists(out): files_to_delete.append(out)
+
+        # Always queue the output file for deletion after upload
+        if out and os.path.exists(out):
+            files_to_delete.append(out)
+
+        # Queue original file for deletion based on config and success
         if dl and os.path.exists(dl):
-            if AUTO_DELETE_ORIGINAL or (process and process.returncode == 0):
+            if AUTO_DELETE_ORIGINAL and successful_compression:
                 files_to_delete.append(dl)
 
         for f in files_to_delete:
@@ -129,14 +141,16 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
         info_after_html = await info(out)
         
         tgp_client = TelegraphPoster(use_api=True)
+        info_before_url, info_after_url = None, None
         try:
             tgp_client.create_api_token("Mediainfo", author_name="CompressorBot")
-            info_before_url = tgp_client.post(title="Mediainfo (Before)", text=info_before_html)["url"] if info_before_html else None
-            info_after_url = tgp_client.post(title="Mediainfo (After)", text=info_after_html)["url"] if info_after_html else None
+            if info_before_html:
+                info_before_url = tgp_client.post(title="Mediainfo (Before)", text=info_before_html)["url"]
+            if info_after_html:
+                info_after_url = tgp_client.post(title="Mediainfo (After)", text=info_after_html)["url"]
         except Exception as e:
             LOGS.error(f"Telegraph post failed: {e}")
-            info_before_url, info_after_url = None, None
-
+            
         gpu_info = f"\n🚀 **Engine**: {GPU_TYPE.upper()}"
         stats_msg = (
             f"✅ **COMPRESSION COMPLETE**\n\n"
@@ -156,20 +170,20 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
         LOGS.error(f"Upload error: {e}", exc_info=True)
         await event.client.send_message(event.chat_id, f"❌ **UPLOAD ERROR**: `{str(e)}`")
 
-# Other top-level functions (dl_link, encod, etc.)
 async def dl_link(event):
     if not event.is_private or str(event.sender_id) not in OWNER: return
     parts = event.text.split(maxsplit=2)
     if len(parts) < 2 or not parts[1].startswith(('http://', 'https://')):
         return await event.reply("❌ **Usage:** `/link <url> [filename.ext]`")
     
-    link, name = parts[1], parts[2] if len(parts) > 2 else ""
+    link = parts[1]
     
     if bot_state.is_working() or bot_state.queue_size() > 0:
-        if not bot_state.add_to_queue(link, name):
-            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE})")
+        if not bot_state.add_to_queue(link, event):
+            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists.")
         return await event.reply(f"✅ Added to queue at position #{bot_state.queue_size()}")
     
+    name = parts[2] if len(parts) > 2 else ""
     await process_link_download(event, link, name)
 
 async def process_link_download(event, link, name):
@@ -179,7 +193,7 @@ async def process_link_download(event, link, name):
         dl = await fast_download(xxx, link, name)
         await process_compression(xxx, dl, dt.now())
     except Exception as er:
-        LOGS.error(f"Link download failed: {er}")
+        LOGS.error(f"Link download failed: {er}", exc_info=True)
         await xxx.edit(f"❌ **Download failed:**\n`{str(er)}`")
     finally:
         bot_state.clear_working()
@@ -193,11 +207,8 @@ async def encod(event):
         return await event.reply(f"❌ File too large: {hbs(doc.size)} > {MAX_FILE_SIZE}MB.")
     
     if bot_state.is_working() or bot_state.queue_size() > 0:
-        if bot_state.is_in_queue(doc.id):
-            return await event.reply("`This file is already in the queue.`")
-        name = event.file.name or f"video_{doc.id}.mp4"
-        if not bot_state.add_to_queue(doc.id, [name, doc]):
-            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}).")
+        if not bot_state.add_to_queue(doc.id, event):
+            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists.")
         return await event.reply(f"`✅ Added to queue at position #{bot_state.queue_size()}`")
     
     await process_file_encoding(event)
@@ -210,7 +221,10 @@ async def process_file_encoding(event):
         file = event.media.document
         filename = event.file.name or f"video_{file.id}.mp4"
         filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+        
+        os.makedirs("downloads/", exist_ok=True)
         dl = os.path.join("downloads/", filename)
+        
         with open(dl, "wb") as f:
             await download_file(
                 client=event.client,
@@ -224,6 +238,3 @@ async def process_file_encoding(event):
         if xxx: await xxx.edit(f"❌ **Processing failed:**\n`{str(er)}`")
     finally:
         bot_state.clear_working()
-        if dl and os.path.exists(dl):
-            # This logic is now handled in process_compression's finally block to respect AUTO_DELETE_ORIGINAL
-            pass

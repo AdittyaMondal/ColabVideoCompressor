@@ -12,7 +12,7 @@ THUMBNAIL = config("THUMBNAIL", default="https://graph.org/file/75ee20ec8d8c8bba
 # --- FILE & QUEUE SETTINGS ---
 MAX_FILE_SIZE = config("MAX_FILE_SIZE", default=4000, cast=int)
 MAX_QUEUE_SIZE = config("MAX_QUEUE_SIZE", default=15, cast=int)
-FILENAME_TEMPLATE = config("FILENAME_TEMPLATE", default="{original_name} [{preset}]")
+FILENAME_TEMPLATE = config("FILENAME_TEMPLATE", default="{original_name} [{resolution} {codec}]")
 AUTO_DELETE_ORIGINAL = config("AUTO_DELETE_ORIGINAL", default=False, cast=bool)
 
 # --- HARDWARE & PERFORMANCE ---
@@ -24,15 +24,16 @@ def detect_gpu():
     if not ENABLE_HARDWARE_ACCELERATION:
         return "cpu"
     try:
-        if os.system("nvidia-smi -L >/dev/null 2>&1") == 0:
+        # Use a more reliable check that doesn't print to stdout
+        if subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0:
             return "nvidia"
-    except Exception:
+    except (FileNotFoundError, Exception):
         pass
     return "cpu"
 
 GPU_TYPE = detect_gpu()
 
-# --- ENCODING PARAMETERS (from Colab Notebook) ---
+# --- ENCODING PARAMETERS ---
 V_CODEC = config("V_CODEC", default="h264_nvenc" if GPU_TYPE == "nvidia" else "libx264")
 V_PRESET = config("V_PRESET", default="p3")
 V_PROFILE = config("V_PROFILE", default="high")
@@ -47,24 +48,13 @@ WATERMARK_ENABLED = config("WATERMARK_ENABLED", default=False, cast=bool)
 WATERMARK_TEXT = config("WATERMARK_TEXT", default="Compressed by Bot")
 WATERMARK_POSITION = config("WATERMARK_POSITION", default="bottom-right")
 
-# --- FILENAME PLACEHOLDERS (for dynamic naming) ---
-FILENAME_PRESET = config("FILENAME_PRESET", default="Preset")
-FILENAME_RESOLUTION = config("FILENAME_RESOLUTION", default="1080p")
-FILENAME_CODEC = config("FILENAME_CODEC", default="h264")
-FILENAME_DATE = config("FILENAME_DATE", default="2024-01-01")
-FILENAME_TIME = config("FILENAME_TIME", default="12-00-00")
-
 # --- LOGGING & DEBUG ---
 IS_COLAB = os.path.exists('/content')
 COLAB_OUTPUT_DIR = "/content/drive/MyDrive/CompressorBot" if IS_COLAB else None
 TELEGRAPH_API = config("TELEGRAPH_API", default="https://api.telegra.ph")
 
-# --- OTHER IMPORTS ---
-from . import LOGS
+# --- DEV TOOLS ---
+ENABLE_EVAL = config("ENABLE_EVAL", default=False, cast=bool)
+ENABLE_BASH = config("ENABLE_BASH", default=False, cast=bool)
 
 print("✅ Configuration Loaded Successfully")
-LOGS.info(f"GPU Detection: {GPU_TYPE} (HW Accel: {'Enabled' if ENABLE_HARDWARE_ACCELERATION else 'Disabled'})")
-LOGS.info(f"Encoding: {V_CODEC}, Preset: {V_PRESET}, Quality: {V_QP}")
-LOGS.info(f"Output: {V_SCALE}p @ {V_FPS}fps, Audio: {A_BITRATE}")
-LOGS.info(f"Watermark: {'Enabled' if WATERMARK_ENABLED else 'Disabled'}")
-LOGS.info(f"Filename Template: {FILENAME_TEMPLATE}")

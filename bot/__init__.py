@@ -41,11 +41,20 @@ except Exception as e:
     exit()
 
 async def startup():
-    """Send startup message to bot owners"""
+    """Send startup message to bot owners and log config"""
+    LOGS.info("--- Configuration ---")
+    LOGS.info(f"GPU Detection: {GPU_TYPE.upper()} (HW Accel: {'Enabled' if ENABLE_HARDWARE_ACCELERATION else 'Disabled'})")
+    LOGS.info(f"Encoding: {V_CODEC}, Preset: {V_PRESET}, Quality: {V_QP}")
+    LOGS.info(f"Output: {V_SCALE}p @ {V_FPS}fps, Audio: {A_BITRATE}")
+    LOGS.info(f"Watermark: {'Enabled' if WATERMARK_ENABLED else 'Disabled'}")
+    LOGS.info(f"Filename Template: {FILENAME_TEMPLATE}")
+    LOGS.info(f"Auto-delete Original: {AUTO_DELETE_ORIGINAL}")
+    LOGS.info("---------------------")
+
     for x in OWNER.split():
         try:
             await bot.send_message(
-                int(x), 
+                int(x),
                 "**🚀 Enhanced Video Compressor Bot Started**\n"
                 f"🖥️ Using {GPU_TYPE.upper()} for encoding"
             )

@@ -1,4 +1,11 @@
-from .worker import *
+import shutil
+import psutil
+import asyncio
+import subprocess
+from datetime import datetime as dt
+from telethon import Button
+from .config import GPU_TYPE, OWNER
+from .funcn import hbs
 
 async def up(event):
     """Ping command handler"""
@@ -8,7 +15,7 @@ async def up(event):
     msg = await event.reply("Pinging...")
     ed = dt.now()
     ms = (ed - stt).microseconds / 1000
-    p = f"🏓 **Pong!**\n⚡ `{ms}ms`\n🚀 Using {GPU_TYPE.upper()}"
+    p = f"🏓 **Pong!**\n⚡ `{ms:.2f}ms`\n🚀 Using {GPU_TYPE.upper()}"
     await msg.edit(p)
 
 async def usage(event):
@@ -23,7 +30,7 @@ async def usage(event):
     upload = hbs(psutil.net_io_counters().bytes_sent)
     down = hbs(psutil.net_io_counters().bytes_recv)
     
-    stats = (
+    stats_msg = (
         "**💻 System Statistics**\n\n"
         f"**CPU Usage:** `{cpuUsage}%`\n"
         f"**RAM Usage:** `{memory}%`\n"
@@ -36,19 +43,33 @@ async def usage(event):
         f"**Free:** `{hbs(free)}`\n"
     )
     
-    if GPU_TYPE != "cpu":
+    if GPU_TYPE == "nvidia":
         try:
-            gpu_util = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]).decode().strip()
-            gpu_mem = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"]).decode().strip().split(", ")
-            stats += (
+            # Using asyncio.create_subprocess_shell for non-blocking calls
+            p1 = await asyncio.create_subprocess_shell(
+                "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            p2 = await asyncio.create_subprocess_shell(
+                "nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout1, _ = await asyncio.wait_for(p1.communicate(), timeout=10)
+            stdout2, _ = await asyncio.wait_for(p2.communicate(), timeout=10)
+            
+            gpu_util = stdout1.decode().strip()
+            gpu_mem_str = stdout2.decode().strip()
+            gpu_mem = gpu_mem_str.split(", ")
+
+            stats_msg += (
                 "\n**GPU Info**\n"
                 f"**GPU Usage:** `{gpu_util}%`\n"
                 f"**GPU Memory:** `{gpu_mem[0]}MB / {gpu_mem[1]}MB`"
             )
-        except:
-            pass
+        except (Exception, FileNotFoundError):
+            stats_msg += "\n**GPU Info**\n`N/A (nvidia-smi not found or failed)`"
     
-    await event.reply(stats)
+    await event.reply(stats_msg)
 
 async def start(event):
     """Start command handler"""
