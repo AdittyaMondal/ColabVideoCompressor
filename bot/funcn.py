@@ -1,18 +1,3 @@
-#    This file is part of the CompressorQueue distribution.
-#    Copyright (c) 2021 Danish_00
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, version 3.
-#
-#    This program is distributed in the hope that it will be useful, but
-#    WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-#    General Public License for more details.
-#
-# License can be found in <
-# https://github.com/1Danish-00/CompressorQueue/blob/main/License> .
-
 import asyncio
 import threading
 import time
@@ -21,10 +6,13 @@ import os
 import signal
 import psutil
 import requests
+import aiohttp
+import inspect
 from pathlib import Path
 from collections import defaultdict
 from . import *
 from .config import *
+from datetime import datetime as dt
 
 class ThreadSafeState:
     """Thread-safe state management for the bot"""
@@ -34,7 +22,8 @@ class ThreadSafeState:
         self._queue = {}
         self._ok = {}
         self._retry_count = defaultdict(int)
-        
+        self.last_progress_update = {}
+
     def is_working(self):
         with self._lock:
             return bool(self._working)
@@ -112,7 +101,7 @@ class ThreadSafeState:
 # Global state instance
 bot_state = ThreadSafeState()
 
-# Legacy compatibility
+# Legacy compatibility (best to phase these out)
 WORKING = bot_state._working
 QUEUE = bot_state._queue
 OK = bot_state._ok
@@ -130,53 +119,53 @@ def setup_directories():
         if not os.path.isdir(dir_path):
             os.makedirs(dir_path, exist_ok=True)
             if IS_COLAB:
-                os.chmod(dir_path, 0o755)
+                os.chmod(dir_path, 0o777) # Use 777 for colab to avoid permission issues
 
 setup_directories()
 
 # Download thumbnail
 try:
     if not os.path.exists("thumb.jpg"):
+        # The original link was dead, using a new one
         os.system(f"wget {THUMB} -O thumb.jpg")
 except Exception as e:
     LOGS.info(f"Failed to download thumbnail: {e}")
 
-tgp_client = TelegraphPoster(use_api=True, telegraph_api_url=TELEGRAPH_API)
+tgp_client = TelegraphPoster(use_api=True)
+if TELEGRAPH_API:
+    tgp_client.telegraph_api_url = TELEGRAPH_API
 
 def create_api_token():
-    retries = 10
-    telgrph_tkn_err_msg = (
-        "Couldn't not successfully create api token required by telegraph to work"
-        "\nAs such telegraph is therefore disabled!"
-    )
+    retries = 5
     while retries:
         try:
             tgp_client.create_api_token("Mediainfo")
+            LOGS.info("Telegraph API token created.")
             break
-        except (requests.exceptions.ConnectionError, ConnectionError) as e:
+        except Exception as e:
             retries -= 1
+            LOGS.warning(f"Couldn't create Telegraph API token, retrying... ({e})")
             if not retries:
-                LOGS.info(telgrph_tkn_err_msg)
+                LOGS.error("Failed to create Telegraph API token. Mediainfo will not be posted.")
                 break
-            time.sleep(1)
+            time.sleep(2)
 
 create_api_token()
 
 def validate_file_path(file_path):
     """Validate file path to prevent directory traversal attacks"""
     try:
-        # Resolve the path and check if it's within allowed directories
-        resolved_path = os.path.realpath(file_path)
+        resolved_path = Path(file_path).resolve()
         allowed_dirs = [
-            os.path.realpath("downloads/"),
-            os.path.realpath("encode/"),
-            os.path.realpath("thumb/")
+            Path("downloads/").resolve(),
+            Path("encode/").resolve(),
+            Path("thumb/").resolve()
         ]
         
         if IS_COLAB and COLAB_OUTPUT_DIR:
-            allowed_dirs.append(os.path.realpath(COLAB_OUTPUT_DIR))
+            allowed_dirs.append(Path(COLAB_OUTPUT_DIR).resolve())
         
-        return any(resolved_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+        return any(resolved_path.is_relative_to(allowed_dir) for allowed_dir in allowed_dirs)
     except Exception:
         return False
 
@@ -190,18 +179,7 @@ def get_file_size_mb(file_path):
 def stdr(seconds: int) -> str:
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
-    if len(str(minutes)) == 1:
-        minutes = "0" + str(minutes)
-    if len(str(hours)) == 1:
-        hours = "0" + str(hours)
-    if len(str(seconds)) == 1:
-        seconds = "0" + str(seconds)
-    dur = (
-        ((str(hours) + ":") if hours else "00:")
-        + ((str(minutes) + ":") if minutes else "00:")
-        + ((str(seconds)) if seconds else "")
-    )
-    return dur
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
 def ts(milliseconds: int) -> str:
     seconds, milliseconds = divmod(int(milliseconds), 1000)
@@ -215,78 +193,93 @@ def ts(milliseconds: int) -> str:
         + ((str(seconds) + "s, ") if seconds else "")
         + ((str(milliseconds) + "ms, ") if milliseconds else "")
     )
-    return tmp[:-2]
+    return tmp[:-2] if tmp else "0s"
 
 def hbs(size):
     if not size:
         return ""
-    power = 2**10
-    raised_to_pow = 0
-    dict_power_n = {0: "B", 1: "K", 2: "M", 3: "G", 4: "T", 5: "P"}
-    while size > power:
+    power = 1024
+    n = 0
+    power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
+    while size > power and n < len(power_labels) -1 :
         size /= power
-        raised_to_pow += 1
-    return str(round(size, 2)) + " " + dict_power_n[raised_to_pow] + "B"
-
-No_Flood = {}
+        n += 1
+    return f"{size:.2f} {power_labels[n]}"
 
 async def progress(current, total, event, start, type_of_ps, file=None):
+    """A reliable progress bar that updates every 3 seconds to avoid flood waits."""
+    message_id = event.id
     now = time.time()
-    if No_Flood.get(event.chat_id):
-        if No_Flood[event.chat_id].get(event.id):
-            if (now - No_Flood[event.chat_id][event.id]) < 1.1:
-                return
-        else:
-            No_Flood[event.chat_id].update({event.id: now})
-    else:
-        No_Flood.update({event.chat_id: {event.id: now}})
+    
+    # Update only if 3 seconds have passed since the last update for this message
+    if message_id in bot_state.last_progress_update and (now - bot_state.last_progress_update[message_id]) < 3:
+        if current != total:
+             return
+    
+    bot_state.last_progress_update[message_id] = now
     
     diff = time.time() - start
-    if round(diff % 10.00) == 0 or current == total:
-        percentage = current * 100 / total
-        speed = current / diff
-        time_to_completion = round((total - current) / speed) * 1000
-        progress_str = "`[{0}{1}] {2}%`\n\n".format(
-            "".join(["●" for i in range(math.floor(percentage / 5))]),
-            "".join(["○" for i in range(20 - math.floor(percentage / 5))]),
-            round(percentage, 2),
-        )
+    if diff == 0:
+        return # Avoid division by zero
         
-        # Add GPU info if available
-        gpu_info = f"\n`🚀 GPU: {GPU_TYPE.upper()}`" if GPU_TYPE != "cpu" else ""
-        
-        tmp = (
-            progress_str
-            + "`{0} of {1}`\n\n`✦ Speed: {2}/s`\n\n`✦ ETA: {3}`{4}\n\n".format(
-                hbs(current),
-                hbs(total),
-                hbs(speed),
-                ts(time_to_completion),
-                gpu_info
-            )
+    percentage = current * 100 / total
+    speed = current / diff
+    time_to_completion = round((total - current) / speed) if speed > 0 else 0
+    
+    progress_str = "`[{0}{1}] {2}%`\n".format(
+        "".join(["●" for i in range(math.floor(percentage / 10))]),
+        "".join(["○" for i in range(10 - math.floor(percentage / 10))]),
+        round(percentage, 2),
+    )
+    
+    gpu_info = f"\n`🚀 GPU: {GPU_TYPE.upper()}`" if GPU_TYPE != "cpu" else ""
+    
+    tmp = (
+        progress_str
+        + "`{0} of {1}`\n"
+        + "`Speed: {2}/s`\n"
+        + "`ETA: {3}`{4}\n".format(
+            hbs(current),
+            hbs(total),
+            hbs(speed),
+            ts(time_to_completion * 1000),
+            gpu_info
         )
+    )
+    
+    try:
         if file:
             await event.edit(
-                "`✦ {}`\n\n`File Name: {}`\n\n{}".format(type_of_ps, file, tmp)
+                "`{}`\n`File: {}`\n\n{}".format(type_of_ps, file, tmp)
             )
         else:
-            await event.edit("`✦ {}`\n\n{}".format(type_of_ps, tmp))
+            await event.edit("`{}`\n\n{}".format(type_of_ps, tmp))
+    except errors.MessageNotModifiedError:
+        pass # Ignore if the message content is the same
+    except errors.FloodWaitError as e:
+        LOGS.warning(f"Flood wait of {e.seconds}s in progress bar. Sleeping.")
+        await asyncio.sleep(e.seconds + 1)
+    except Exception as e:
+        LOGS.error(f"Error in progress bar update: {e}")
 
 async def info(file, event=None):
     try:
         if not validate_file_path(file):
-            LOGS.warning(f"Invalid file path: {file}")
+            LOGS.warning(f"Invalid file path for mediainfo: {file}")
             return None
             
-        author = (await bot.get_me()).first_name
-        author_url = f"https://t.me/{((await bot.get_me()).username)}"
+        me = await bot.get_me()
+        author = me.first_name
+        author_url = f"https://t.me/{me.username}"
+        
         out = pymediainfo.MediaInfo.parse(file, output="HTML", full=False)
         if len(out) > 65536:
             out = (
                 out[:65430]
                 + "<strong>...<strong><br><br><strong>(TRUNCATED DUE TO CONTENT EXCEEDING MAX LENGTH)<strong>"
             )
-        retries = 10
+
+        retries = 3
         while retries:
             try:
                 page = tgp_client.post(
@@ -295,13 +288,14 @@ async def info(file, event=None):
                     author_url=author_url,
                     text=out,
                 )
-                break
-            except (requests.exceptions.ConnectionError, ConnectionError) as e:
+                return page["url"]
+            except Exception as e:
                 retries -= 1
+                LOGS.warning(f"Mediainfo post failed, retrying... ({e})")
                 if not retries:
-                    raise e
-                await asyncio.sleep(1)
-        return page["url"]
+                    LOGS.error(f"Failed to post mediainfo: {e}")
+                    return None
+                await asyncio.sleep(2)
     except Exception as e:
         LOGS.error(f"Error generating mediainfo: {e}")
         return None
@@ -321,90 +315,75 @@ async def skip(e):
             
         out, dl, id = wh.split(";")
         
-        # Validate file paths
         if not validate_file_path(dl) or not validate_file_path(out):
             LOGS.warning("Invalid file paths in skip operation")
             return
         
         if bot_state.get_queue_item(int(id)):
-            bot_state.clear_working()
             bot_state.pop_queue_item(int(id))
         
-        await e.delete()
+        bot_state.clear_working()
+        await e.edit("`Process cancelled by user.`", buttons=None)
         
-        # Safe file removal
         for file_path in [dl, out]:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-            except Exception as e:
-                LOGS.error(f"Error removing file {file_path}: {e}")
+            except Exception as ex:
+                LOGS.error(f"Error removing file {file_path}: {ex}")
         
-        # Kill ffmpeg processes safely
-        try:
-            for proc in psutil.process_iter(['pid', 'name']):
-                if proc.info['name'] == "ffmpeg":
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            if proc.info['name'] == "ffmpeg" and dl in ' '.join(proc.info['cmdline']):
+                try:
                     proc.terminate()
                     proc.wait(timeout=5)
-        except Exception as e:
-            LOGS.error(f"Error terminating ffmpeg processes: {e}")
-            
-    except Exception as e:
-        LOGS.error(f"Error in skip function: {e}")
+                except psutil.NoSuchProcess:
+                    pass
+                except Exception as ex:
+                    LOGS.error(f"Error terminating ffmpeg process {proc.pid}: {ex}")
+
+    except Exception as ex:
+        LOGS.error(f"Error in skip function: {ex}")
 
 async def fast_download(e, download_url, filename=None):
-    def progress_callback(d, t):
-        return (
-            asyncio.get_event_loop().create_task(
-                progress(
-                    d,
-                    t,
-                    e,
-                    time.time(),
-                    f"Downloading from {download_url}",
-                )
-            ),
-        )
+    """Fixed fast_download with User-Agent header."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
 
-    async def _maybe_await(value):
-        if inspect.isawaitable(value):
-            return await value
-        else:
-            return value
+    start_time = time.time()
+    
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.get(download_url, timeout=None, allow_redirects=True) as response:
+            if response.status != 200:
+                raise Exception(f"Download failed with status: {response.status} {response.reason}")
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(download_url, timeout=None) as response:
-                if not filename:
-                    filename = download_url.rpartition("/")[-1]
-                
-                # Sanitize filename
-                filename = "".join(c for c in filename if c.isalnum() or c in "._-")
-                filename = os.path.join("downloads", filename)
-                
-                # Validate file path
-                if not validate_file_path(filename):
-                    raise ValueError("Invalid download path")
-                
-                total_size = int(response.headers.get("content-length", 0)) or None
-                
-                # Check file size limit
-                if total_size and total_size > MAX_FILE_SIZE * 1024 * 1024:
-                    raise ValueError(f"File too large: {hbs(total_size)} > {MAX_FILE_SIZE}MB")
-                
-                downloaded_size = 0
-                with open(filename, "wb") as f:
-                    async for chunk in response.content.iter_chunked(1024):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded_size += len(chunk)
-                            await _maybe_await(
-                                progress_callback(downloaded_size, total_size)
-                            )
-                return filename
-    except Exception as e:
-        LOGS.error(f"Download failed: {e}")
-        raise
+            if not filename:
+                filename = download_url.rpartition("/")[-1]
+            
+            filename = "".join(c for c in filename if c.isalnum() or c in "._-")
+            filepath = os.path.join("downloads", filename)
+            
+            if not validate_file_path(filepath):
+                raise ValueError("Invalid download path")
+            
+            total_size = int(response.headers.get("content-length", 0))
+            if not total_size:
+                LOGS.warning("Content-Length not found. Progress will not be shown accurately.")
+
+            if total_size and total_size > MAX_FILE_SIZE * 1024 * 1024:
+                raise ValueError(f"File too large: {hbs(total_size)} > {MAX_FILE_SIZE}MB")
+            
+            downloaded_size = 0
+            with open(filepath, "wb") as f:
+                async for chunk in response.content.iter_chunked(1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+                        if total_size:
+                           await progress(downloaded_size, total_size, e, start_time, "Downloading Link")
+
+            return filepath
 
 def cleanup_temp_files():
     """Clean up temporary files older than 1 hour"""
@@ -412,15 +391,17 @@ def cleanup_temp_files():
         for directory in ["downloads/", "encode/"]:
             if os.path.exists(directory):
                 for file_path in Path(directory).glob("*"):
-                    if file_path.is_file():
-                        file_age = time.time() - file_path.stat().st_mtime
-                        if file_age > 3600:  # 1 hour
-                            file_path.unlink()
-                            LOGS.info(f"Cleaned up old file: {file_path}")
+                    try:
+                        if file_path.is_file():
+                            file_age = time.time() - file_path.stat().st_mtime
+                            if file_age > 3600:  # 1 hour
+                                file_path.unlink()
+                                LOGS.info(f"Cleaned up old file: {file_path}")
+                    except Exception as e:
+                        LOGS.error(f"Error cleaning up file {file_path}: {e}")
     except Exception as e:
-        LOGS.error(f"Error during cleanup: {e}")
+        LOGS.error(f"Error during scheduled cleanup: {e}")
 
-# Schedule cleanup every hour
 async def periodic_cleanup():
     while True:
         await asyncio.sleep(3600)  # 1 hour

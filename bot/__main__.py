@@ -1,7 +1,13 @@
 import signal
 import sys
+import asyncio
 from . import *
 from .devtools import *
+from .worker import *
+from .funcn import *
+from .stuff import *
+from datetime import datetime as dt
+import time
 
 LOGS.info("Starting Enhanced Video Compressor Bot...")
 LOGS.info(f"GPU Detection: {GPU_TYPE}")
@@ -64,19 +70,19 @@ async def _(e):
 
 ######## Callbacks #########
 
-@bot.on(events.callbackquery.CallbackQuery(data=re.compile(b"stats(.*)")))
+@bot.on(events.CallbackQuery(data=re.compile(b"stats(.*)")))
 async def _(e):
     await stats(e)
 
-@bot.on(events.callbackquery.CallbackQuery(data=re.compile(b"skip(.*)")))
+@bot.on(events.CallbackQuery(data=re.compile(b"skip(.*)")))
 async def _(e):
     await skip(e)
 
-@bot.on(events.callbackquery.CallbackQuery(data=re.compile("ihelp")))
+@bot.on(events.CallbackQuery(data=re.compile(b"ihelp")))
 async def _(e):
     await ihelp(e)
 
-@bot.on(events.callbackquery.CallbackQuery(data=re.compile("beck")))
+@bot.on(events.CallbackQuery(data=re.compile(b"beck")))
 async def _(e):
     await beck(e)
 
@@ -96,82 +102,53 @@ async def _(e):
 
 ########## AUTO ###########
 
-@bot.on(events.NewMessage(incoming=True))
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.media and str(e.sender_id) in OWNER))
 async def _(e):
     await encod(e)
+
+def cleanup_files(file_paths):
+    """Safely cleanup a list of files."""
+    for file_path in file_paths:
+        if file_path and os.path.exists(file_path) and validate_file_path(file_path):
+            try:
+                os.remove(file_path)
+                LOGS.info(f"Cleaned up file: {file_path}")
+            except Exception as e:
+                LOGS.error(f"Failed to clean up {file_path}: {e}")
 
 async def queue_processor():
     """Enhanced queue processing with better error handling"""
     while True:
         try:
             if not bot_state.is_working() and bot_state.queue_size() > 0:
-                user = int(OWNER.split()[0])
-                e = await bot.send_message(user, "`🔄 Processing Queue Files...`")
-                
-                key, item = bot_state.get_first_queue_item()
+                user_id = int(OWNER.split()[0])
+                key, item = bot_state.pop_first_queue_item()
                 if not key or not item:
                     await asyncio.sleep(3)
                     continue
-                
+
                 bot_state.set_working(True)
+                e = await bot.send_message(user_id, f"`🔄 Processing item #{bot_state.queue_size() + 1} from queue...`")
                 s = dt.now()
-                
+                dl = None
+
                 try:
-                    if isinstance(item, str):
-                        # URL download
-                        dl = await fast_download(e, key, item)
-                    else:
-                        # File download
-                        dl, file = item
-                        tt = time.time()
-                        dl = "downloads/" + dl
-                        
-                        # Sanitize filename
-                        dl = "downloads/" + "".join(c for c in dl.split("/")[-1] if c.isalnum() or c in "._-")
-                        
-                        with open(dl, "wb") as f:
-                            await download_file(
-                                client=bot,
-                                location=file,
-                                out=f,
-                                progress_callback=lambda d, t: asyncio.get_event_loop().create_task(
-                                    progress(d, t, e, tt, "Downloading")
-                                ),
-                            )
-                    
-                    # Check file size
-                    file_size_mb = get_file_size_mb(dl)
-                    if file_size_mb > MAX_FILE_SIZE:
-                        await e.edit(f"❌ File too large: {file_size_mb:.1f}MB > {MAX_FILE_SIZE}MB")
-                        cleanup_files([dl])
-                        bot_state.pop_first_queue_item()
-                        bot_state.clear_working()
-                        continue
-                    
-                    await process_compression(e, dl, s)
-                    bot_state.pop_first_queue_item()
-                    bot_state.clear_working()
+                    if isinstance(item, str): # URL download
+                        await process_link_download(e, key, item)
+                    else: # File download
+                        await process_file_encoding(e)
                     
                 except Exception as r:
-                    LOGS.error(f"Queue processing error: {r}")
-                    retry_count = bot_state.increment_retry(key)
-                    
-                    if retry_count >= MAX_RETRIES:
-                        await e.edit(f"❌ Failed after {MAX_RETRIES} attempts: {str(r)}")
-                        bot_state.pop_first_queue_item()
-                        bot_state.clear_retry(key)
-                    else:
-                        await e.edit(f"⚠️ Attempt {retry_count} failed, retrying...")
-                        await asyncio.sleep(2 ** retry_count)  # Exponential backoff
-                    
+                    LOGS.error(f"Queue processing error for key {key}: {r}")
+                    await e.edit(f"❌ **Queue Error**\nAn unexpected error occurred while processing an item from the queue.\n`{str(r)}`")
                     bot_state.clear_working()
-                    if 'dl' in locals():
-                        cleanup_files([dl])
+                    cleanup_files([dl] if 'dl' in locals() else [])
+            
             else:
                 await asyncio.sleep(3)
                 
         except Exception as err:
-            LOGS.error(f"Queue processor error: {err}")
+            LOGS.error(f"Fatal queue processor error: {err}")
             bot_state.clear_working()
             await asyncio.sleep(5)
 
@@ -180,19 +157,14 @@ async def queue_processor():
 async def main():
     """Main bot execution with proper error handling"""
     try:
-        # Start periodic cleanup
         cleanup_task = asyncio.create_task(periodic_cleanup())
-        
-        # Start queue processor
         queue_task = asyncio.create_task(queue_processor())
         
         LOGS.info("Bot has started successfully.")
         LOGS.info(f"Using {GPU_TYPE.upper()} for encoding")
         
-        # Send startup notification
         await startup()
         
-        # Keep the bot running
         await asyncio.gather(cleanup_task, queue_task)
         
     except KeyboardInterrupt:
@@ -200,7 +172,6 @@ async def main():
     except Exception as e:
         LOGS.error(f"Bot crashed: {e}")
     finally:
-        # Cleanup on exit
         bot_state.clear_working()
         cleanup_temp_files()
         LOGS.info("Bot shutdown complete")
