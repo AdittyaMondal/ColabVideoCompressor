@@ -1,5 +1,6 @@
 import subprocess
 import os
+import re
 from decouple import config
 
 def detect_gpu():
@@ -26,17 +27,18 @@ try:
     OWNER = config("OWNER")
     
     # Bot settings
-    MAX_FILE_SIZE = config("MAX_FILE_SIZE", default=4000, cast=int)  # MB
+    MAX_FILE_SIZE = config("MAX_FILE_SIZE", default=4000, cast=int)
     MAX_QUEUE_SIZE = config("MAX_QUEUE_SIZE", default=10, cast=int)
     THUMB = config("THUMBNAIL", default="https://graph.org/file/75ee20ec8d8c8bba84f02.jpg")
     
+    # Filename Template
+    FILENAME_TEMPLATE = config("FILENAME_TEMPLATE", default="{original_name}_compressed")
+
     # Hardware and Encoding settings
-    # These are now set by the Colab notebook via the .env file
-    # Defaults are for running locally without the notebook
     GPU_TYPE = detect_gpu()
-    V_PRESET = config("V_PRESET", default="medium")
+    V_PRESET = config("V_PRESET", default="p2")
     V_QP = config("V_QP", default=28, cast=int)
-    V_SCALE = config("V_SCALE", default=720, cast=int) # -1 means don't scale
+    V_SCALE = config("V_SCALE", default=720, cast=int)
     A_BITRATE = config("A_BITRATE", default="128k")
 
     # Other settings
@@ -47,6 +49,7 @@ try:
 
     print(f"GPU Detection: {GPU_TYPE}")
     print(f"Running in Colab: {IS_COLAB}")
+    print(f"Filename Template: {FILENAME_TEMPLATE}")
     print(f"Encoding params: Preset={V_PRESET}, QP={V_QP}, Scale={V_SCALE}, Audio={A_BITRATE}")
 
 except Exception as e:
