@@ -74,6 +74,7 @@ async def process_compression(event, dl, start_time):
         # Configure hardware acceleration and filters based on codec type
         if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
             cmd_parts.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+            cmd_parts.extend(['-i', f'"{dl}"'])
             filters = []
             if V_SCALE != -1:
                 filters.append(f'scale_cuda=-2:{V_SCALE}')
@@ -84,6 +85,7 @@ async def process_compression(event, dl, start_time):
                 cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
         else:
             # Use software filters for software codecs or when hardware acceleration is disabled
+            cmd_parts.extend(['-i', f'"{dl}"'])
             filters = []
             if V_SCALE != -1:
                 filters.append(f'scale=-2:{V_SCALE}')
@@ -92,7 +94,7 @@ async def process_compression(event, dl, start_time):
             if filters:
                 cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
         
-        cmd_parts.extend(['-i', f'"{dl}"'])
+
         
         # Encoding parameters
         cmd_parts.extend([
