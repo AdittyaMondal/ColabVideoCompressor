@@ -1,16 +1,24 @@
 import re
 import os
 import time
+import asyncio
 from datetime import datetime
 from pathlib import Path
-from .FastTelethon import download_file, upload_file
-from .funcn import *
-from .config import *
+
 from telethon import Button
 from html_telegraph_poster import TelegraphPoster
 
+from .FastTelethon import download_file, upload_file
+from .funcn import bot_state, code, ts, hbs, progress, info, validate_file_path
+from .config import (
+    LOGS, OWNER, MAX_FILE_SIZE, MAX_QUEUE_SIZE, FILENAME_TEMPLATE, AUTO_DELETE_ORIGINAL,
+    GPU_TYPE, V_CODEC, V_PRESET, V_PROFILE, V_LEVEL, V_QP, V_SCALE, V_FPS, A_BITRATE,
+    WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_POSITION, ENABLE_HARDWARE_ACCELERATION
+)
+
+
 def get_watermark_filter():
-    """Constructs the watermark filter part of the ffmpeg command."""
+    """Constructs the watermark filter part of the FFmpeg command."""
     if not WATERMARK_ENABLED:
         return ""
 
@@ -22,26 +30,24 @@ def get_watermark_filter():
         "center": "x=(w-text_w)/2:y=(h-text_h)/2"
     }
     position = position_map.get(WATERMARK_POSITION, "x=w-text_w-10:y=h-text_h-10")
-    # Escape special characters for FFmpeg's drawtext filter
     escaped_text = WATERMARK_TEXT.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\%")
     
     return f"drawtext=text='{escaped_text}':fontcolor=white@0.8:fontsize=24:box=1:boxcolor=black@0.4:boxborderw=5:{position}"
+
 
 async def process_compression(event, dl, start_time):
     """Main compression logic with dynamic command building, watermarking, and renaming."""
     out = None
     process = None
     try:
-        compress_start_time = dt.now()
+        compress_start_time = datetime.now()
         original_name = Path(dl).stem
         os.makedirs("encode/", exist_ok=True)
         
-        # Dynamic filename generation
         filename_map = {
-            'original_name': original_name,
-            'preset': V_PRESET,
+            'original_name': original_name, 'preset': V_PRESET,
             'resolution': f"{V_SCALE}p" if V_SCALE > 0 else "source",
-            'codec': V_CODEC.replace("_nvenc", "").replace("lib", ""),
+            'codec': V_CODEC.replace('_nvenc', '').replace('lib', ''),
             'date': compress_start_time.strftime("%Y-%m-%d"),
             'time': compress_start_time.strftime("%H-%M-%S"),
         }
@@ -59,61 +65,91 @@ async def process_compression(event, dl, start_time):
             buttons=[[Button.inline("📊 STATS", data=f"stats{wah}"), Button.inline("❌ CANCEL", data=f"skip{wah}")]]
         )
 
-        video_filters = []
-        if V_SCALE != -1: video_filters.append(f"scale=-2:{V_SCALE}")
-        
-        watermark_filter = get_watermark_filter()
-        if watermark_filter: video_filters.append(watermark_filter)
-        
-        vf_string = f'-vf "{",".join(video_filters)}"' if video_filters else ""
+        # Determine if the codec is hardware-accelerated
+        is_hardware_codec = '_nvenc' in V_CODEC
 
-        cmd = f'ffmpeg -y -hide_banner -loglevel error'
-        if GPU_TYPE == "nvidia": cmd += ' -hwaccel cuda -hwaccel_output_format cuda'
+        # --- FFmpeg Command Builder ---
+        cmd_parts = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error']
         
-        cmd += f' -i "{dl}" -c:v {V_CODEC} -preset {V_PRESET} -profile:v {V_PROFILE} -level:v {V_LEVEL}'
+        # Configure hardware acceleration and filters based on codec type
+        if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
+            cmd_parts.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+            filters = []
+            if V_SCALE != -1:
+                filters.append(f'scale_cuda=-2:{V_SCALE}')
+            if WATERMARK_ENABLED:
+                watermark_filter = get_watermark_filter()
+                filters.append(f'hwdownload,format=yuv420p,{watermark_filter},format=yuv420p,hwupload_cuda')
+            if filters:
+                cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
+        else:
+            # Use software filters for software codecs or when hardware acceleration is disabled
+            filters = []
+            if V_SCALE != -1:
+                filters.append(f'scale=-2:{V_SCALE}')
+            if WATERMARK_ENABLED:
+                filters.append(get_watermark_filter())
+            if filters:
+                cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
         
-        if 'nvenc' in V_CODEC: cmd += f' -rc constqp -qp {V_QP}'
-        else: cmd += f' -crf {V_QP}'
-            
-        cmd += f' -r {V_FPS} -c:a aac -b:a {A_BITRATE} {vf_string} -movflags +faststart "{out}"'
-
+        cmd_parts.extend(['-i', f'"{dl}"'])
+        
+        # Encoding parameters
+        cmd_parts.extend([
+            '-c:v', V_CODEC,
+            '-preset', V_PRESET,
+            '-profile:v', V_PROFILE,
+            '-level:v', V_LEVEL,
+            '-crf', str(V_QP),
+            '-r', str(V_FPS),
+            '-c:a', 'aac',
+            '-b:a', A_BITRATE,
+            '-movflags', '+faststart',
+            f'"{out}"'
+        ])
+        
+        cmd = ' '.join(cmd_parts)
         LOGS.info(f"Executing FFmpeg command: {cmd}")
         process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
         _, stderr = await process.communicate()
         
+        stderr_output = stderr.decode(errors='ignore')
         if process.returncode != 0:
-            return await event.edit(f"❌ **COMPRESSION ERROR**\n```{stderr.decode(errors='ignore')[:3500]}```")
+            error_message = f"❌ **COMPRESSION ERROR**\n`{stderr_output[:3500]}`"
+            return await event.edit(error_message)
+        
         if not os.path.exists(out) or os.path.getsize(out) == 0:
-            return await event.edit("❌ **COMPRESSION FAILED**\nOutput file not created or empty.")
+            return await event.edit(f"❌ **COMPRESSION FAILED**\nOutput file not created or empty.\n\n**FFmpeg Logs:**\n`{stderr_output[:3000]}`")
         
         await upload_compressed_file(event, dl, out, dtime, compress_start_time)
         
     except Exception as e:
         LOGS.error(f"Compression process error: {e}", exc_info=True)
-        await event.edit(f"❌ **COMPRESSION ERROR**: `{str(e)}`")
+        await event.edit(f"❌ **FATAL COMPRESSION ERROR**: `{str(e)}`")
     finally:
         successful_compression = process and process.returncode == 0
-        files_to_delete = []
-
-        # Always queue the output file for deletion after upload
-        if out and os.path.exists(out):
-            files_to_delete.append(out)
-
-        # Queue original file for deletion based on config and success
-        if dl and os.path.exists(dl):
+        
+        # Clean up output file
+        if out and os.path.exists(out) and validate_file_path(out):
+            try:
+                os.remove(out)
+            except OSError as e:
+                LOGS.error(f"Failed to delete output file {out}: {e}")
+        
+        # Clean up original file based on settings
+        if dl and os.path.exists(dl) and validate_file_path(dl):
             if AUTO_DELETE_ORIGINAL and successful_compression:
-                files_to_delete.append(dl)
+                try:
+                    os.remove(dl)
+                except OSError as e:
+                    LOGS.error(f"Failed to delete original file {dl}: {e}")
 
-        for f in files_to_delete:
-            if validate_file_path(f):
-                try: os.remove(f)
-                except OSError as e: LOGS.error(f"Failed to delete file {f}: {e}")
 
 async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
     try:
         await event.delete()
         
-        compress_end_time = dt.now()
+        compress_end_time = datetime.now()
         comp_time = ts(int((compress_end_time - compress_start_time).total_seconds()) * 1000)
         
         nnn = await event.client.send_message(event.chat_id, "`Preparing to upload...`")
@@ -170,8 +206,10 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
         LOGS.error(f"Upload error: {e}", exc_info=True)
         await event.client.send_message(event.chat_id, f"❌ **UPLOAD ERROR**: `{str(e)}`")
 
+
 async def dl_link(event):
-    if not event.is_private or str(event.sender_id) not in OWNER: return
+    if not event.is_private or str(event.sender_id) not in OWNER.split():
+        return
     parts = event.text.split(maxsplit=2)
     if len(parts) < 2 or not parts[1].startswith(('http://', 'https://')):
         return await event.reply("❌ **Usage:** `/link <url> [filename.ext]`")
@@ -186,32 +224,39 @@ async def dl_link(event):
     name = parts[2] if len(parts) > 2 else ""
     await process_link_download(event, link, name)
 
+
 async def process_link_download(event, link, name):
     bot_state.set_working(True)
     xxx = await event.reply("`Analysing link...`")
     try:
+        from .funcn import fast_download
         dl = await fast_download(xxx, link, name)
-        await process_compression(xxx, dl, dt.now())
+        await process_compression(xxx, dl, datetime.now())
     except Exception as er:
         LOGS.error(f"Link download failed: {er}", exc_info=True)
         await xxx.edit(f"❌ **Download failed:**\n`{str(er)}`")
     finally:
         bot_state.clear_working()
 
-async def encod(event):
-    if not event.is_private or not event.media or str(event.sender_id) not in OWNER: return
-    if not (hasattr(event.media, "document") and event.media.document.mime_type.startswith("video")): return
 
-    doc = event.media.document
-    if doc.size > MAX_FILE_SIZE * 1024 * 1024:
-        return await event.reply(f"❌ File too large: {hbs(doc.size)} > {MAX_FILE_SIZE}MB.")
+async def encod(event):
+    if not event.is_private or not event.media or str(event.sender_id) not in OWNER.split():
+        return
+    
+    doc_attr = getattr(event.media, 'document', None)
+    if not (doc_attr and doc_attr.mime_type and doc_attr.mime_type.startswith("video")):
+        return
+
+    if doc_attr.size > MAX_FILE_SIZE * 1024 * 1024:
+        return await event.reply(f"❌ File too large: {hbs(doc_attr.size)} > {MAX_FILE_SIZE}MB.")
     
     if bot_state.is_working() or bot_state.queue_size() > 0:
-        if not bot_state.add_to_queue(doc.id, event):
-            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists.")
+        if not bot_state.add_to_queue(doc_attr.id, event):
+            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists radially.")
         return await event.reply(f"`✅ Added to queue at position #{bot_state.queue_size()}`")
     
     await process_file_encoding(event)
+
 
 async def process_file_encoding(event):
     bot_state.set_working(True)
@@ -219,22 +264,26 @@ async def process_file_encoding(event):
     dl = None
     try:
         file = event.media.document
-        filename = event.file.name or f"video_{file.id}.mp4"
-        filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+        filename = getattr(event.file, 'name', f"video_{file.id}.mp4")
+        if not filename:
+            filename = f"video_{file.id}.mp4"
+        
+        sanitized_filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
         
         os.makedirs("downloads/", exist_ok=True)
-        dl = os.path.join("downloads/", filename)
+        dl = os.path.join("downloads/", sanitized_filename)
         
         with open(dl, "wb") as f:
             await download_file(
                 client=event.client,
                 location=file,
                 out=f,
-                progress_callback=lambda d, t: progress(d, t, xxx, time.time(), "Downloading File", filename)
+                progress_callback=lambda d, t: progress(d, t, xxx, time.time(), "Downloading File", sanitized_filename)
             )
-        await process_compression(xxx, dl, dt.now())
+        await process_compression(xxx, dl, datetime.now())
     except Exception as er:
         LOGS.error(f"File encoding failed: {er}", exc_info=True)
-        if xxx: await xxx.edit(f"❌ **Processing failed:**\n`{str(er)}`")
+        if xxx:
+            await xxx.edit(f"❌ **Processing failed:**\n`{str(er)}`")
     finally:
         bot_state.clear_working()
