@@ -1,0 +1,14 @@
+setup:
+  addons:
+    - plan: heroku-postgresql
+      as: DATABASE
+build:
+  docker:
+    worker: Dockerfile
+  config:
+    STACK: container
+run:
+  worker: bash run.sh
+features:
+  # Enable GPU support on Heroku
+  runtime-gpu: true

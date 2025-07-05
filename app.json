@@ -1,0 +1,62 @@
+{
+    "name": "Colab Video Compressor",
+    "description": "Advanced Telegram Bot with GPU acceleration for video compression, optimized for Google Colab.",
+    "logo": "https://envs.sh/F82.jpg",
+    "keywords": ["Telegram", "Video", "Compressor", "Encoder", "GPU", "CUDA", "Colab"],
+    "repository": "https://github.com/AdittyaMondal/ColabVideoCompressor",
+    "stack": "container",
+    "env": {
+        "APP_ID": {
+            "description": "Your Telegram API ID from my.telegram.org",
+            "value": ""
+        },
+        "API_HASH": {
+            "description": "Your Telegram API Hash from my.telegram.org",
+            "value": ""
+        },
+        "BOT_TOKEN": {
+            "description": "Bot token from @BotFather",
+            "value": ""
+        },
+        "OWNER": {
+            "description": "Your Telegram User ID (get from @userinfobot)",
+            "value": ""
+        },
+        "THUMBNAIL": {
+            "description": "Thumbnail image URL for compressed videos",
+            "value": "https://envs.sh/F82.jpg",
+            "required": false
+        },
+        "FFMPEG": {
+            "description": "Custom FFmpeg command (leave empty for auto GPU detection)",
+            "value": "",
+            "required": false
+        },
+        "MAX_FILE_SIZE": {
+            "description": "Maximum file size in MB (default: 2000)",
+            "value": "2000",
+            "required": false
+        },
+        "MAX_QUEUE_SIZE": {
+            "description": "Maximum queue size (default: 10)",
+            "value": "10",
+            "required": false
+        },
+        "ENABLE_EVAL": {
+            "description": "Enable eval command (security risk - use with caution)",
+            "value": "false",
+            "required": false
+        },
+        "ENABLE_BASH": {
+            "description": "Enable bash command (security risk - use with caution)",
+            "value": "false",
+            "required": false
+        }
+    },
+    "formation": {
+        "worker": {
+            "quantity": 1,
+            "size": "basic"
+        }
+    }
+}
