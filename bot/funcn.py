@@ -69,9 +69,10 @@ setup_directories()
 
 def validate_file_path(file_path):
     try:
+        if not file_path: return False
         resolved_path = Path(file_path).resolve()
-        # Check against parent directories to prevent traversal
-        return any(str(resolved_path).startswith(str(Path(d).resolve())) for d in ["/content/", "/content/drive/"])
+        base_path = Path("/content").resolve()
+        return str(resolved_path).startswith(str(base_path))
     except Exception:
         return False
 
@@ -134,11 +135,11 @@ async def progress(current, total, event, start, type_of_ps, file=None):
     except Exception as e:
         LOGS.error(f"Progress bar error: {e}")
 
-async def info(file):
+async def info(file_path):
     try:
-        return pymediainfo.MediaInfo.parse(file, output="HTML", full=False)
+        return pymediainfo.MediaInfo.parse(file_path, output="HTML", full=False)
     except Exception as e:
-        LOGS.error(f"Pymediainfo failed for {file}: {e}")
+        LOGS.error(f"Pymediainfo failed for {file_path}: {e}")
         return None
 
 def code(data):
@@ -197,3 +198,19 @@ async def fast_download(e, download_url, filename=None):
                     if total_size:
                        await progress(downloaded_size, total_size, e, start_time, "Downloading Link", filename)
             return filepath
+
+def cleanup_temp_files():
+    """Clean up temporary files older than 1 hour"""
+    for directory in ["downloads/", "encode/", "temp/"]:
+        if not os.path.isdir(directory): continue
+        for file_path in Path(directory).glob("*"):
+            try:
+                if file_path.is_file() and (time.time() - file_path.stat().st_mtime > 3600):
+                    file_path.unlink()
+            except (OSError, FileNotFoundError) as e:
+                LOGS.warning(f"Failed to cleanup old file {file_path}: {e}")
+
+async def periodic_cleanup():
+    while True:
+        await asyncio.sleep(3600)
+        cleanup_temp_files()

@@ -155,3 +155,75 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
     except Exception as e:
         LOGS.error(f"Upload error: {e}", exc_info=True)
         await event.client.send_message(event.chat_id, f"❌ **UPLOAD ERROR**: `{str(e)}`")
+
+# Other top-level functions (dl_link, encod, etc.)
+async def dl_link(event):
+    if not event.is_private or str(event.sender_id) not in OWNER: return
+    parts = event.text.split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].startswith(('http://', 'https://')):
+        return await event.reply("❌ **Usage:** `/link <url> [filename.ext]`")
+    
+    link, name = parts[1], parts[2] if len(parts) > 2 else ""
+    
+    if bot_state.is_working() or bot_state.queue_size() > 0:
+        if not bot_state.add_to_queue(link, name):
+            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE})")
+        return await event.reply(f"✅ Added to queue at position #{bot_state.queue_size()}")
+    
+    await process_link_download(event, link, name)
+
+async def process_link_download(event, link, name):
+    bot_state.set_working(True)
+    xxx = await event.reply("`Analysing link...`")
+    try:
+        dl = await fast_download(xxx, link, name)
+        await process_compression(xxx, dl, dt.now())
+    except Exception as er:
+        LOGS.error(f"Link download failed: {er}")
+        await xxx.edit(f"❌ **Download failed:**\n`{str(er)}`")
+    finally:
+        bot_state.clear_working()
+
+async def encod(event):
+    if not event.is_private or not event.media or str(event.sender_id) not in OWNER: return
+    if not (hasattr(event.media, "document") and event.media.document.mime_type.startswith("video")): return
+
+    doc = event.media.document
+    if doc.size > MAX_FILE_SIZE * 1024 * 1024:
+        return await event.reply(f"❌ File too large: {hbs(doc.size)} > {MAX_FILE_SIZE}MB.")
+    
+    if bot_state.is_working() or bot_state.queue_size() > 0:
+        if bot_state.is_in_queue(doc.id):
+            return await event.reply("`This file is already in the queue.`")
+        name = event.file.name or f"video_{doc.id}.mp4"
+        if not bot_state.add_to_queue(doc.id, [name, doc]):
+            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}).")
+        return await event.reply(f"`✅ Added to queue at position #{bot_state.queue_size()}`")
+    
+    await process_file_encoding(event)
+
+async def process_file_encoding(event):
+    bot_state.set_working(True)
+    xxx = await event.reply("`Preparing to download...`")
+    dl = None
+    try:
+        file = event.media.document
+        filename = event.file.name or f"video_{file.id}.mp4"
+        filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+        dl = os.path.join("downloads/", filename)
+        with open(dl, "wb") as f:
+            await download_file(
+                client=event.client,
+                location=file,
+                out=f,
+                progress_callback=lambda d, t: progress(d, t, xxx, time.time(), "Downloading File", filename)
+            )
+        await process_compression(xxx, dl, dt.now())
+    except Exception as er:
+        LOGS.error(f"File encoding failed: {er}", exc_info=True)
+        if xxx: await xxx.edit(f"❌ **Processing failed:**\n`{str(er)}`")
+    finally:
+        bot_state.clear_working()
+        if dl and os.path.exists(dl):
+            # This logic is now handled in process_compression's finally block to respect AUTO_DELETE_ORIGINAL
+            pass

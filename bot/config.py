@@ -1,6 +1,6 @@
 import os
 import re
-from decouple import config, Csv
+from decouple import config
 
 # --- CORE API & BOT SETTINGS ---
 APP_ID = config("APP_ID", cast=int)
@@ -24,7 +24,6 @@ def detect_gpu():
     if not ENABLE_HARDWARE_ACCELERATION:
         return "cpu"
     try:
-        # A quick check for nvidia-smi's existence and return code
         if os.system("nvidia-smi -L >/dev/null 2>&1") == 0:
             return "nvidia"
     except Exception:
@@ -60,9 +59,12 @@ IS_COLAB = os.path.exists('/content')
 COLAB_OUTPUT_DIR = "/content/drive/MyDrive/CompressorBot" if IS_COLAB else None
 TELEGRAPH_API = config("TELEGRAPH_API", default="https://api.telegra.ph")
 
+# --- OTHER IMPORTS ---
+from . import LOGS
+
 print("✅ Configuration Loaded Successfully")
-print(f"GPU Detection: {GPU_TYPE} (Hardware Acceleration: {'Enabled' if ENABLE_HARDWARE_ACCELERATION else 'Disabled'})")
-print(f"Video Codec: {V_CODEC}, Preset: {V_PRESET}, Quality (QP/CRF): {V_QP}")
-print(f"Output: {V_SCALE}p @ {V_FPS}fps, Audio: {A_BITRATE}")
-print(f"Watermark: {'Enabled' if WATERMARK_ENABLED else 'Disabled'}")
-print(f"Filename Template: {FILENAME_TEMPLATE}")
+LOGS.info(f"GPU Detection: {GPU_TYPE} (HW Accel: {'Enabled' if ENABLE_HARDWARE_ACCELERATION else 'Disabled'})")
+LOGS.info(f"Encoding: {V_CODEC}, Preset: {V_PRESET}, Quality: {V_QP}")
+LOGS.info(f"Output: {V_SCALE}p @ {V_FPS}fps, Audio: {A_BITRATE}")
+LOGS.info(f"Watermark: {'Enabled' if WATERMARK_ENABLED else 'Disabled'}")
+LOGS.info(f"Filename Template: {FILENAME_TEMPLATE}")
