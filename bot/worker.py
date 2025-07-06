@@ -14,7 +14,8 @@ from .config import (
     LOGS, OWNER, MAX_FILE_SIZE, MAX_QUEUE_SIZE, FILENAME_TEMPLATE, AUTO_DELETE_ORIGINAL,
     GPU_TYPE, V_CODEC, V_PRESET, V_PROFILE, V_LEVEL, V_QP, V_SCALE, V_FPS, A_BITRATE,
     WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_POSITION, ENABLE_HARDWARE_ACCELERATION,
-    DEFAULT_UPLOAD_MODE
+    DEFAULT_UPLOAD_MODE, ENABLE_SCREENSHOTS, SCREENSHOT_COUNT, ENABLE_VIDEO_PREVIEW,
+    PREVIEW_DURATION, PREVIEW_QUALITY
 )
 
 
@@ -124,7 +125,14 @@ async def process_compression(event, dl, start_time):
         if not os.path.exists(out) or os.path.getsize(out) == 0:
             return await event.edit(f"❌ **COMPRESSION FAILED**\nOutput file not created or empty.\n\n**FFmpeg Logs:**\n`{stderr_output[:3000]}`")
         
-        await upload_compressed_file(event, dl, out, dtime, compress_start_time)
+        preview_path, screenshots = None, []
+        if ENABLE_VIDEO_PREVIEW:
+            preview_path = await generate_preview(out)
+            
+        if ENABLE_SCREENSHOTS:
+            screenshots = await generate_screenshots(out)
+            
+        await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots)
         
     except Exception as e:
         LOGS.error(f"Compression process error: {e}", exc_info=True)
@@ -148,7 +156,52 @@ async def process_compression(event, dl, start_time):
                     LOGS.error(f"Failed to delete original file {dl}: {e}")
 
 
-async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
+async def generate_preview(video_path):
+    try:
+        preview_output = f"encode/{Path(video_path).stem}_preview.mp4"
+        duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
+        process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await process.communicate()
+        duration = float(stdout)
+        
+        preview_duration = min(duration, PREVIEW_DURATION)
+        
+        cmd = f"ffmpeg -y -i \"{video_path}\" -ss 0 -t {preview_duration} -c:v libx264 -crf {PREVIEW_QUALITY} -preset veryfast -c:a aac -b:a 128k \"{preview_output}\""
+        process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+        _, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            LOGS.error(f"Preview generation failed: {stderr.decode(errors='ignore')}")
+            return None
+        return preview_output
+    except Exception as e:
+        LOGS.error(f"Error generating preview: {e}", exc_info=True)
+        return None
+
+async def generate_screenshots(video_path):
+    screenshots = []
+    try:
+        duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
+        process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await process.communicate()
+        duration = float(stdout)
+        
+        interval = duration / (SCREENSHOT_COUNT + 1)
+        
+        for i in range(1, SCREENSHOT_COUNT + 1):
+            timestamp = interval * i
+            screenshot_path = f"encode/screenshot_{i}.jpg"
+            cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -q:v 2 \"{screenshot_path}\""
+            process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+            await process.communicate()
+            if os.path.exists(screenshot_path):
+                screenshots.append(screenshot_path)
+        return screenshots
+    except Exception as e:
+        LOGS.error(f"Error generating screenshots: {e}", exc_info=True)
+        return []
+
+async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None):
     try:
         await event.delete()
         
@@ -177,6 +230,15 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
         final_message = await event.client.send_file(
             event.chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=f"`{upload_name}`"
         )
+        
+        if preview_path:
+            await event.client.send_file(event.chat_id, file=preview_path, caption="**Video Preview**")
+            os.remove(preview_path)
+            
+        if screenshots:
+            await event.client.send_file(event.chat_id, file=screenshots, caption="**Screenshots**")
+            for ss in screenshots:
+                os.remove(ss)
         
         org_size, com_size = os.path.getsize(dl), os.path.getsize(out)
         reduction = 100 - (com_size / org_size * 100) if org_size > 0 else 0

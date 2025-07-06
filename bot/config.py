@@ -60,6 +60,13 @@ WATERMARK_POSITION = config("WATERMARK_POSITION", default="bottom-right")
 UPLOAD_CONNECTIONS = config("UPLOAD_CONNECTIONS", default=5, cast=int)
 DEFAULT_UPLOAD_MODE = config("DEFAULT_UPLOAD_MODE", default="Document")
 
+# --- PREVIEW & SCREENSHOTS ---
+ENABLE_SCREENSHOTS = config("ENABLE_SCREENSHOTS", default=False, cast=bool)
+SCREENSHOT_COUNT = config("SCREENSHOT_COUNT", default=5, cast=int)
+ENABLE_VIDEO_PREVIEW = config("ENABLE_VIDEO_PREVIEW", default=False, cast=bool)
+PREVIEW_DURATION = config("PREVIEW_DURATION", default=10, cast=int)
+PREVIEW_QUALITY = config("PREVIEW_QUALITY", default=28, cast=int)
+
 # --- LOGGING & DEBUG ---
 IS_COLAB = os.path.exists('/content')
 COLAB_OUTPUT_DIR = "/content/drive/MyDrive/CompressorBot" if IS_COLAB else None
