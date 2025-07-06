@@ -34,7 +34,19 @@ def get_watermark_filter():
     position = position_map.get(WATERMARK_POSITION, "x=w-text_w-10:y=h-text_h-10")
     escaped_text = WATERMARK_TEXT.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\%")
     
-    return f"drawtext=text='{escaped_text}':fontcolor=white@0.8:fontsize=24:box=1:boxcolor=black@0.4:boxborderw=5:{position}"
+    # Enhanced watermark with better visibility and styling
+    watermark_filter = (
+        f"drawtext=text='{escaped_text}'"
+        f":fontcolor=white@0.9"
+        f":fontsize=24"
+        f":box=1"
+        f":boxcolor=black@0.6"
+        f":boxborderw=3"
+        f":{position}"
+    )
+
+    LOGS.info(f"Watermark filter: {watermark_filter}")
+    return watermark_filter
 
 
 async def process_compression(event, dl, start_time):
@@ -90,10 +102,13 @@ async def process_compression(event, dl, start_time):
         
         if WATERMARK_ENABLED:
             watermark_filter = get_watermark_filter()
-            if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
-                filters.append(f'hwdownload,format=nv12,{watermark_filter},hwupload_cuda')
-            else:
-                filters.append(watermark_filter)
+            if watermark_filter:  # Only add if watermark filter is valid
+                if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
+                    # For hardware acceleration, we need to download from GPU, apply watermark, then upload back
+                    filters.append(f'hwdownload,format=nv12,{watermark_filter},hwupload_cuda')
+                else:
+                    # For software encoding, apply watermark directly
+                    filters.append(watermark_filter)
         
         if filters:
             cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
@@ -125,14 +140,17 @@ async def process_compression(event, dl, start_time):
         if not os.path.exists(out) or os.path.getsize(out) == 0:
             return await event.edit(f"❌ **COMPRESSION FAILED**\nOutput file not created or empty.\n\n**FFmpeg Logs:**\n`{stderr_output[:3000]}`")
         
+        # Generate thumbnail, preview, and screenshots
+        thumbnail_path = await generate_thumbnail(out)
         preview_path, screenshots = None, []
+
         if ENABLE_VIDEO_PREVIEW:
             preview_path = await generate_preview(out)
-            
+
         if ENABLE_SCREENSHOTS:
             screenshots = await generate_screenshots(out)
             
-        await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots)
+        await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots, thumbnail_path)
         
     except Exception as e:
         LOGS.error(f"Compression process error: {e}", exc_info=True)
@@ -157,51 +175,163 @@ async def process_compression(event, dl, start_time):
 
 
 async def generate_preview(video_path):
+    """Generate a short preview clip from the video"""
     try:
         preview_output = f"encode/{Path(video_path).stem}_preview.mp4"
+
+        # Get video duration first
         duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
         process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await process.communicate()
-        duration = float(stdout)
-        
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            LOGS.error(f"Failed to get video duration for preview: {stderr.decode(errors='ignore')}")
+            return None
+
+        duration = float(stdout.decode().strip())
+        LOGS.info(f"Video duration: {duration:.2f} seconds")
+
+        # Calculate preview parameters
         preview_duration = min(duration, PREVIEW_DURATION)
-        
-        cmd = f"ffmpeg -y -i \"{video_path}\" -ss 0 -t {preview_duration} -c:v libx264 -crf {PREVIEW_QUALITY} -preset veryfast -c:a aac -b:a 128k \"{preview_output}\""
+
+        # Start from 10% into the video or 5 seconds, whichever is smaller
+        start_time = min(duration * 0.1, 5.0) if duration > 10 else 0
+
+        # Ensure we don't exceed video duration
+        if start_time + preview_duration > duration:
+            start_time = max(0, duration - preview_duration)
+
+        LOGS.info(f"Generating preview: {preview_duration}s starting at {start_time}s")
+
+        # Generate preview with optimized settings
+        cmd = (f"ffmpeg -y -ss {start_time} -i \"{video_path}\" -t {preview_duration} "
+               f"-c:v libx264 -crf {PREVIEW_QUALITY} -preset veryfast "
+               f"-vf \"scale=-2:720:force_original_aspect_ratio=decrease\" "
+               f"-c:a aac -b:a 128k -movflags +faststart \"{preview_output}\"")
+
         process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
         _, stderr = await process.communicate()
-        
-        if process.returncode != 0:
+
+        if process.returncode == 0 and os.path.exists(preview_output):
+            file_size = os.path.getsize(preview_output)
+            LOGS.info(f"Preview generated successfully: {preview_output} ({file_size} bytes)")
+            return preview_output
+        else:
             LOGS.error(f"Preview generation failed: {stderr.decode(errors='ignore')}")
             return None
-        return preview_output
+
     except Exception as e:
         LOGS.error(f"Error generating preview: {e}", exc_info=True)
         return None
 
 async def generate_screenshots(video_path):
+    """Generate multiple screenshots from video at different timestamps"""
     screenshots = []
     try:
+        # Get video duration first
         duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
         process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await process.communicate()
-        duration = float(stdout)
-        
-        interval = duration / (SCREENSHOT_COUNT + 1)
-        
-        for i in range(1, SCREENSHOT_COUNT + 1):
-            timestamp = interval * i
-            screenshot_path = f"encode/screenshot_{i}.jpg"
-            cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -q:v 2 \"{screenshot_path}\""
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            LOGS.error(f"Failed to get video duration for screenshots: {stderr.decode(errors='ignore')}")
+            return []
+
+        duration = float(stdout.decode().strip())
+        LOGS.info(f"Generating {SCREENSHOT_COUNT} screenshots from {duration:.2f}s video")
+
+        # Calculate timestamps for screenshots (avoid first and last 5% of video)
+        start_offset = duration * 0.05  # Skip first 5%
+        end_offset = duration * 0.95    # Skip last 5%
+        usable_duration = end_offset - start_offset
+
+        if usable_duration <= 0:
+            LOGS.warning("Video too short for quality screenshots")
+            usable_duration = duration
+            start_offset = 0
+
+        interval = usable_duration / SCREENSHOT_COUNT
+
+        for i in range(SCREENSHOT_COUNT):
+            timestamp = start_offset + (interval * i) + (interval / 2)  # Take from middle of each interval
+            screenshot_path = f"encode/screenshot_{i+1}.jpg"
+
+            # Generate screenshot with good quality and reasonable size
+            cmd = (f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 "
+                   f"-vf \"scale=1280:720:force_original_aspect_ratio=decrease\" "
+                   f"-q:v 2 \"{screenshot_path}\"")
+
             process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
-            await process.communicate()
-            if os.path.exists(screenshot_path):
+            _, stderr = await process.communicate()
+
+            if process.returncode == 0 and os.path.exists(screenshot_path):
+                file_size = os.path.getsize(screenshot_path)
+                LOGS.info(f"Screenshot {i+1} generated: {screenshot_path} ({file_size} bytes)")
                 screenshots.append(screenshot_path)
+            else:
+                LOGS.error(f"Failed to generate screenshot {i+1} at {timestamp:.2f}s: {stderr.decode(errors='ignore')}")
+
+        LOGS.info(f"Successfully generated {len(screenshots)}/{SCREENSHOT_COUNT} screenshots")
         return screenshots
+
     except Exception as e:
         LOGS.error(f"Error generating screenshots: {e}", exc_info=True)
         return []
 
-async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None):
+
+async def generate_thumbnail(video_path):
+    """Generate a thumbnail image from video for Telegram upload"""
+    try:
+        thumb_path = "thumb.jpg"
+
+        # Get video duration first
+        duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
+        process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await process.communicate()
+
+        if process.returncode != 0:
+            LOGS.error("Failed to get video duration for thumbnail")
+            return None
+
+        duration = float(stdout.decode().strip())
+        # Take thumbnail from 10% into the video or 5 seconds, whichever is smaller
+        timestamp = min(duration * 0.1, 5.0)
+
+        # Generate thumbnail with specific size for Telegram (320x320 max, maintaining aspect ratio)
+        cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -vf \"scale=320:320:force_original_aspect_ratio=decrease\" -q:v 2 \"{thumb_path}\""
+        process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+        _, stderr = await process.communicate()
+
+        if process.returncode == 0 and os.path.exists(thumb_path):
+            LOGS.info(f"Thumbnail generated successfully: {thumb_path}")
+            return thumb_path
+        else:
+            LOGS.error(f"Failed to generate thumbnail: {stderr.decode(errors='ignore')}")
+            return None
+
+    except Exception as e:
+        LOGS.error(f"Error generating thumbnail: {e}", exc_info=True)
+        return None
+
+
+async def get_video_duration(video_path):
+    """Get video duration in seconds"""
+    try:
+        duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
+        process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await process.communicate()
+
+        if process.returncode == 0:
+            duration = float(stdout.decode().strip())
+            return duration
+        else:
+            LOGS.error("Failed to get video duration")
+            return None
+    except Exception as e:
+        LOGS.error(f"Error getting video duration: {e}", exc_info=True)
+        return None
+
+async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None, thumbnail_path=None):
     try:
         await event.delete()
         
@@ -223,12 +353,18 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         upload_time = ts(int((time.time() - upload_start_time) * 1000))
         await nnn.delete()
 
-        thumb_path = "thumb.jpg" if os.path.exists("thumb.jpg") else None
+        # Use generated thumbnail or fallback to existing thumb.jpg
+        thumb_path = thumbnail_path if thumbnail_path and os.path.exists(thumbnail_path) else ("thumb.jpg" if os.path.exists("thumb.jpg") else None)
         
         force_document = upload_mode == "Document"
         
+        # Create enhanced caption with duration
+        caption = f"`{upload_name}`"
+        if video_duration:
+            caption += f"\n🎬 Duration: {duration_str}"
+
         final_message = await event.client.send_file(
-            event.chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=f"`{upload_name}`"
+            event.chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=caption
         )
         
         if preview_path:
@@ -242,6 +378,10 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         
         org_size, com_size = os.path.getsize(dl), os.path.getsize(out)
         reduction = 100 - (com_size / org_size * 100) if org_size > 0 else 0
+
+        # Get video duration for display
+        video_duration = await get_video_duration(out)
+        duration_str = f"{int(video_duration//60)}:{int(video_duration%60):02d}" if video_duration else "Unknown"
         
         info_before_html = await info(dl)
         info_after_html = await info(out)
@@ -261,7 +401,8 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         stats_msg = (
             f"✅ **COMPRESSION COMPLETE**\n\n"
             f"📁 **Original Size**: {hbs(org_size)}\n"
-            f"📦 **Compressed Size**: {hbs(com_size)} ({reduction:.2f}% reduction)\n\n"
+            f"📦 **Compressed Size**: {hbs(com_size)} ({reduction:.2f}% reduction)\n"
+            f"🎬 **Duration**: {duration_str}\n\n"
             f"⏱️ **Time Taken:**\n"
             f"  - **Download**: {dtime}\n"
             f"  - **Compress**: {comp_time}\n"

@@ -4,6 +4,16 @@ import subprocess
 from decouple import config
 from logging import INFO, basicConfig, getLogger
 
+# --- PIL COMPATIBILITY FIX ---
+# Fix for PIL.Image ANTIALIAS deprecation in newer Pillow versions
+try:
+    from PIL import Image
+    # For Pillow >= 10.0.0, ANTIALIAS is deprecated, use LANCZOS instead
+    if not hasattr(Image, 'ANTIALIAS'):
+        Image.ANTIALIAS = Image.LANCZOS
+except ImportError:
+    pass
+
 # --- LOGGING SETUP ---
 # Define logger here to be importable by all other modules without circular deps
 basicConfig(

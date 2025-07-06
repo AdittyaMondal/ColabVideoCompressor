@@ -9,3 +9,4 @@ tgcrypto
 nvidia-ml-py3
 gpustat
 pynvml
+Pillow>=10.0.0
