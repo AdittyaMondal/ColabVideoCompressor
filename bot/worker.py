@@ -21,7 +21,10 @@ from .config import (
 
 def get_watermark_filter():
     """Constructs the watermark filter part of the FFmpeg command."""
+    LOGS.info(f"Watermark check - ENABLED: {WATERMARK_ENABLED}, TEXT: '{WATERMARK_TEXT}', POSITION: {WATERMARK_POSITION}")
+
     if not WATERMARK_ENABLED:
+        LOGS.info("Watermark is disabled, skipping filter creation")
         return ""
 
     position_map = {
@@ -73,9 +76,20 @@ async def process_compression(event, dl, start_time):
         
         wah = code(f"{out};{dl};{event.id}")
         
-        gpu_info = f" (🚀 {GPU_TYPE.upper()})" if GPU_TYPE != "cpu" else ""
+        # Enhanced compression status with more details
+        gpu_info = f"🚀 {GPU_TYPE.upper()}" if GPU_TYPE != "cpu" else "💻 CPU"
+        codec_info = V_CODEC.replace('_nvenc', ' (HW)').replace('lib', '').upper()
+
+        status_parts = [f"📥 Downloaded in {dtime}", f"🔄 Compressing with {codec_info}", f"⚙️ Engine: {gpu_info}"]
+        if WATERMARK_ENABLED:
+            status_parts.append(f"🏷️ Adding watermark")
+        if V_SCALE > 0:
+            status_parts.append(f"📐 Target: {V_SCALE}p")
+
+        status_msg = "\n".join([f"`{part}`" for part in status_parts])
+
         await event.edit(
-            f"`✅ Downloaded in {dtime}`\n\n`🔄 Compressing{gpu_info}...`",
+            status_msg,
             buttons=[[Button.inline("📊 STATS", data=f"stats{wah}"), Button.inline("❌ CANCEL", data=f"skip{wah}")]]
         )
 
@@ -358,6 +372,10 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         
         force_document = upload_mode == "Document"
         
+        # Get video duration for display
+        video_duration = await get_video_duration(out)
+        duration_str = f"{int(video_duration//60)}:{int(video_duration%60):02d}" if video_duration else "Unknown"
+
         # Create enhanced caption with duration
         caption = f"`{upload_name}`"
         if video_duration:
@@ -378,10 +396,6 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         
         org_size, com_size = os.path.getsize(dl), os.path.getsize(out)
         reduction = 100 - (com_size / org_size * 100) if org_size > 0 else 0
-
-        # Get video duration for display
-        video_duration = await get_video_duration(out)
-        duration_str = f"{int(video_duration//60)}:{int(video_duration%60):02d}" if video_duration else "Unknown"
         
         info_before_html = await info(dl)
         info_after_html = await info(out)
@@ -459,6 +473,31 @@ async def toggle_upload_mode(event):
     bot_state.set_upload_mode(event.sender_id, new_mode)
     
     await event.reply(f"☁️ Upload mode switched to **{new_mode}**.")
+
+
+async def toggle_watermark(event):
+    """Toggle watermark on/off"""
+    if str(event.sender_id) not in OWNER.split():
+        return
+
+    # Import config module to modify the global variable
+    from . import config
+
+    # Toggle the watermark setting
+    config.WATERMARK_ENABLED = not config.WATERMARK_ENABLED
+
+    # Update the global variable in this module too
+    global WATERMARK_ENABLED
+    WATERMARK_ENABLED = config.WATERMARK_ENABLED
+
+    status = "✅ Enabled" if WATERMARK_ENABLED else "❌ Disabled"
+    await event.reply(
+        f"🏷️ **Watermark Status Updated**\n\n"
+        f"**Status**: {status}\n"
+        f"**Text**: `{WATERMARK_TEXT}`\n"
+        f"**Position**: `{WATERMARK_POSITION}`\n\n"
+        f"Changes will apply to new compressions."
+    )
 
 
 async def custom_encoder(event):
