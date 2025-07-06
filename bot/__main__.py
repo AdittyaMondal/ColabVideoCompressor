@@ -9,7 +9,10 @@ from telethon import events
 from .config import LOGS, BOT_TOKEN, OWNER, MAX_QUEUE_SIZE, GPU_TYPE
 from . import bot, startup
 from .funcn import bot_state, uptime, cleanup_temp_files, periodic_cleanup, ts, skip, stats
-from .worker import process_link_download, process_file_encoding, encod, dl_link
+from .worker import (
+    process_link_download, process_file_encoding, encod, dl_link,
+    toggle_upload_mode, custom_encoder
+)
 from .stuff import start, up, help, usage, ihelp, beck
 
 LOGS.info("Starting Enhanced Video Compressor Bot...")
@@ -47,6 +50,12 @@ async def _(e): await help(e)
 
 @bot.on(events.NewMessage(pattern="/link"))
 async def _(e): await dl_link(e)
+
+@bot.on(events.NewMessage(pattern="/toggle_upload_mode"))
+async def _(e): await toggle_upload_mode(e)
+
+@bot.on(events.NewMessage(pattern="/custom"))
+async def _(e): await custom_encoder(e)
 
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):

@@ -56,6 +56,10 @@ WATERMARK_ENABLED = config("WATERMARK_ENABLED", default=False, cast=bool)
 WATERMARK_TEXT = config("WATERMARK_TEXT", default="Compressed by Bot")
 WATERMARK_POSITION = config("WATERMARK_POSITION", default="bottom-right")
 
+# --- UPLOAD SETTINGS ---
+UPLOAD_CONNECTIONS = config("UPLOAD_CONNECTIONS", default=5, cast=int)
+DEFAULT_UPLOAD_MODE = config("DEFAULT_UPLOAD_MODE", default="Document")
+
 # --- LOGGING & DEBUG ---
 IS_COLAB = os.path.exists('/content')
 COLAB_OUTPUT_DIR = "/content/drive/MyDrive/CompressorBot" if IS_COLAB else None

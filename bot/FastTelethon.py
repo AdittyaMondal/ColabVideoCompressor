@@ -40,6 +40,7 @@ from telethon.tl.types import (
     InputPhotoFileLocation,
     TypeInputFile,
 )
+from .config import UPLOAD_CONNECTIONS
 
 filename = ""
 
@@ -270,7 +271,7 @@ class ParallelTransferrer:
         part_size_kb: Optional[float] = None,
         connection_count: Optional[int] = None,
     ) -> Tuple[int, int, bool]:
-        connection_count = connection_count or self._get_connection_count(file_size)
+        connection_count = connection_count or UPLOAD_CONNECTIONS
         part_size = (part_size_kb or utils.get_appropriated_part_size(file_size)) * 1024
         part_count = (file_size + part_size - 1) // part_size
         is_large = file_size > 10 * 1024 * 1024

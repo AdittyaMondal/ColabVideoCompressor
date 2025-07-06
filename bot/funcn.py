@@ -16,7 +16,7 @@ from html_telegraph_poster import TelegraphPoster
 # Import explicitly from config module
 from .config import (
     LOGS, MAX_QUEUE_SIZE, IS_COLAB, COLAB_OUTPUT_DIR, GPU_TYPE,
-    MAX_FILE_SIZE, PROGRESS_UPDATE_INTERVAL
+    MAX_FILE_SIZE, PROGRESS_UPDATE_INTERVAL, DEFAULT_UPLOAD_MODE
 )
 
 class BotState:
@@ -26,6 +26,7 @@ class BotState:
         self._queue = OrderedDict()
         self._ok = {}  # For callback data
         self.last_progress_update = {}
+        self.user_upload_modes = {}
     
     def is_working(self): return self._is_working
     def set_working(self, value=True): self._is_working = value
@@ -54,6 +55,12 @@ class BotState:
         
     def get_ok(self, key):
         return self._ok.get(str(key))
+
+    def set_upload_mode(self, user_id, mode):
+        self.user_upload_modes[user_id] = mode
+
+    def get_upload_mode(self, user_id):
+        return self.user_upload_modes.get(user_id, DEFAULT_UPLOAD_MODE)
 
 bot_state = BotState()
 uptime = dt.now()

@@ -13,7 +13,8 @@ from .funcn import bot_state, code, ts, hbs, progress, info, validate_file_path
 from .config import (
     LOGS, OWNER, MAX_FILE_SIZE, MAX_QUEUE_SIZE, FILENAME_TEMPLATE, AUTO_DELETE_ORIGINAL,
     GPU_TYPE, V_CODEC, V_PRESET, V_PROFILE, V_LEVEL, V_QP, V_SCALE, V_FPS, A_BITRATE,
-    WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_POSITION, ENABLE_HARDWARE_ACCELERATION
+    WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_POSITION, ENABLE_HARDWARE_ACCELERATION,
+    DEFAULT_UPLOAD_MODE
 )
 
 
@@ -156,6 +157,8 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
         
         nnn = await event.client.send_message(event.chat_id, "`Preparing to upload...`")
         
+        upload_mode = bot_state.get_upload_mode(event.sender_id)
+        
         upload_name = Path(out).name
         upload_start_time = time.time()
         with open(out, "rb") as f:
@@ -168,8 +171,11 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time):
         await nnn.delete()
 
         thumb_path = "thumb.jpg" if os.path.exists("thumb.jpg") else None
+        
+        force_document = upload_mode == "Document"
+        
         final_message = await event.client.send_file(
-            event.chat_id, file=uploaded_file, force_document=True, thumb=thumb_path, caption=f"`{upload_name}`"
+            event.chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=f"`{upload_name}`"
         )
         
         org_size, com_size = os.path.getsize(dl), os.path.getsize(out)
@@ -239,6 +245,41 @@ async def process_link_download(event, link, name):
         await xxx.edit(f"❌ **Download failed:**\n`{str(er)}`")
     finally:
         bot_state.clear_working()
+
+
+async def toggle_upload_mode(event):
+    if not event.is_private or str(event.sender_id) not in OWNER.split():
+        return
+    
+    current_mode = bot_state.get_upload_mode(event.sender_id)
+    new_mode = "Document" if current_mode == "File" else "File"
+    bot_state.set_upload_mode(event.sender_id, new_mode)
+    
+    await event.reply(f"☁️ Upload mode switched to **{new_mode}**.")
+
+
+async def custom_encoder(event):
+    if not event.is_private or str(event.sender_id) not in OWNER.split():
+        return
+    
+    if not event.reply_to_msg_id:
+        return await event.reply("Reply to a video file to use custom encoding.")
+        
+    replied_msg = await event.get_reply_message()
+    if not replied_msg.media or not getattr(replied_msg.media, 'document', None):
+        return await event.reply("Reply to a video file to use custom encoding.")
+
+    args = event.text.split()
+    custom_settings = {}
+    for i in range(1, len(args), 2):
+        try:
+            key = args[i][1:]
+            value = args[i+1]
+            custom_settings[key] = value
+        except IndexError:
+            break
+            
+    await process_file_encoding(replied_msg, custom_settings=custom_settings)
 
 
 async def encod(event):
