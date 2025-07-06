@@ -68,44 +68,44 @@ async def process_compression(event, dl, start_time):
         # Determine if the codec is hardware-accelerated
         is_hardware_codec = '_nvenc' in V_CODEC
 
-        # --- FFmpeg Command Builder ---
+        # FFmpeg Command Builder
         cmd_parts = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error']
         
-        # Configure hardware acceleration and filters based on codec type
+        # Input options (before -i)
         if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
             cmd_parts.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
-            cmd_parts.extend(['-i', f'"{dl}"'])
-            filters = []
-            if V_SCALE != -1:
+        
+        # Input file
+        cmd_parts.extend(['-i', f'"{dl}"'])
+        
+        # Output options (after -i, before output file)
+        filters = []
+        if V_SCALE != -1:
+            if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
                 filters.append(f'scale_cuda=-2:{V_SCALE}')
-            if WATERMARK_ENABLED:
-                watermark_filter = get_watermark_filter()
-                filters.append(f'hwdownload,format=yuv420p,{watermark_filter},format=yuv420p,hwupload_cuda')
-            if filters:
-                cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
-        else:
-            # Use software filters for software codecs or when hardware acceleration is disabled
-            cmd_parts.extend(['-i', f'"{dl}"'])
-            filters = []
-            if V_SCALE != -1:
-                filters.append(f'scale=-2:{V_SCALE}')
-            if WATERMARK_ENABLED:
-                filters.append(get_watermark_filter())
-            if filters:
-                cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
+            else:
+                filters.append(f'scale=-2:{V_SCALE}:force_original_aspect_ratio=decrease')
         
-
+        if WATERMARK_ENABLED:
+            watermark_filter = get_watermark_filter()
+            if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
+                filters.append(f'hwdownload,format=nv12,{watermark_filter},hwupload_cuda')
+            else:
+                filters.append(watermark_filter)
         
-        # Encoding parameters
+        if filters:
+            cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
+        
+        # Encoding parameters with custom settings
         cmd_parts.extend([
-            '-c:v', V_CODEC,
-            '-preset', V_PRESET,
-            '-profile:v', V_PROFILE,
+            '-c:v', V_CODEC,          # libx265
+            '-preset', V_PRESET,      # p3
+            '-profile:v', V_PROFILE,  # high
             '-level:v', V_LEVEL,
-            '-crf', str(V_QP),
-            '-r', str(V_FPS),
+            '-crf', str(V_QP),        # 26
+            '-r', str(V_FPS),         # 120
             '-c:a', 'aac',
-            '-b:a', A_BITRATE,
+            '-b:a', A_BITRATE,        # 384k
             '-movflags', '+faststart',
             f'"{out}"'
         ])
@@ -254,7 +254,7 @@ async def encod(event):
     
     if bot_state.is_working() or bot_state.queue_size() > 0:
         if not bot_state.add_to_queue(doc_attr.id, event):
-            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists radially.")
+            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists.")
         return await event.reply(f"`✅ Added to queue at position #{bot_state.queue_size()}`")
     
     await process_file_encoding(event)
