@@ -55,12 +55,11 @@ def get_watermark_filter(user_id: int = None):
     return watermark_filter
 
 
-async def process_compression(event, dl, start_time):
+async def process_compression(event, dl, start_time, user_id: int):
     """Main compression logic with dynamic command building, watermarking, and renaming."""
     out = None
     process = None
     try:
-        user_id = event.sender_id
         compress_start_time = datetime.now()
         original_name = Path(dl).stem
         os.makedirs("encode/", exist_ok=True)
@@ -217,7 +216,7 @@ async def process_compression(event, dl, start_time):
         
         # Clean up original file based on settings
         if dl and os.path.exists(dl) and validate_file_path(dl):
-            output_settings = settings_manager.get_setting("output_settings", user_id=event.sender_id)
+            output_settings = settings_manager.get_setting("output_settings", user_id=user_id)
             auto_delete_original = output_settings.get("auto_delete_original", False)
             if auto_delete_original and successful_compression:
                 try:
@@ -600,12 +599,13 @@ async def dl_link(event):
 
 
 async def process_link_download(event, link, name):
+    user_id = event.sender_id
     bot_state.set_working(True)
     xxx = await event.reply("`Analysing link...`")
     try:
         from .funcn import fast_download
         dl = await fast_download(xxx, link, name)
-        await process_compression(xxx, dl, datetime.now())
+        await process_compression(xxx, dl, datetime.now(), user_id)
     except Exception as er:
         LOGS.error(f"Link download failed: {er}", exc_info=True)
         await xxx.edit(f"❌ **Download failed:**\n`{str(er)}`")
@@ -698,6 +698,7 @@ async def encod(event):
 
 
 async def process_file_encoding(event):
+    user_id = event.sender_id
     bot_state.set_working(True)
     xxx = await event.reply("`Preparing to download...`")
     dl = None
@@ -719,7 +720,7 @@ async def process_file_encoding(event):
                 out=f,
                 progress_callback=lambda d, t: progress(d, t, xxx, time.time(), "Downloading File", sanitized_filename)
             )
-        await process_compression(xxx, dl, datetime.now())
+        await process_compression(xxx, dl, datetime.now(), user_id)
     except Exception as er:
         LOGS.error(f"File encoding failed: {er}", exc_info=True)
         if xxx:
