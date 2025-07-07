@@ -33,7 +33,10 @@ sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure'
 APP_ID = config("APP_ID", cast=int)
 API_HASH = config("API_HASH")
 BOT_TOKEN = config("BOT_TOKEN")
-OWNER = config("OWNER", default="")
+
+# FIXED: Handle OWNER variable with spaces and commas
+owner_ids = config("OWNER", default="")
+OWNER = [str(x.strip()) for x in owner_ids.split(",") if x.strip()] if owner_ids else []
 
 # --- FILE & QUEUE SETTINGS ---
 MAX_FILE_SIZE = config("MAX_FILE_SIZE", default=4000, cast=int)
@@ -93,3 +96,4 @@ ENABLE_EVAL = config("ENABLE_EVAL", default=False, cast=bool)
 ENABLE_BASH = config("ENABLE_BASH", default=False, cast=bool)
 
 LOGS.info("✅ Configuration Loaded Successfully")
+LOGS.info(f"Owner IDs: {OWNER}")
