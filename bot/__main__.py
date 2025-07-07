@@ -76,7 +76,7 @@ async def _(e):
     """Handle settings command with detailed logging and error handling"""
     try:
         LOGS.info(f"Settings command received from user {e.sender_id}")
-        
+
         # --- FIX: Added explicit check for OWNER variable ---
         if not OWNER:
             LOGS.warning("OWNER variable is not set. Settings command is disabled.")
@@ -88,16 +88,25 @@ async def _(e):
             return await e.reply("❌ You don't have permission to access settings.\n\nPlease ensure your User ID is listed in the `OWNER` variable in the bot's configuration.")
 
         LOGS.info("User is owner, proceeding to show settings menu")
+
+        # Test basic message sending first
+        LOGS.info("Testing basic message reply...")
+        test_msg = await e.reply("🔄 Loading settings menu...")
+        LOGS.info("Basic reply successful, proceeding with settings menu")
+
         if not hasattr(settings_menu, 'settings_manager') or settings_menu.settings_manager is None:
             LOGS.error("Settings manager not initialized")
-            return await e.reply("❌ Settings system not initialized. Please restart the bot and try again.")
+            return await test_msg.edit("❌ Settings system not initialized. Please restart the bot and try again.")
 
         LOGS.info("Settings manager is initialized, displaying main menu")
-        await settings_menu.show_main_menu(e, e.sender_id)
+        await settings_menu.show_main_menu(test_msg, e.sender_id)
         LOGS.info("Settings menu displayed successfully")
     except Exception as er:
         LOGS.error(f"Settings command error: {er}", exc_info=True)
-        await e.reply(f"❌ Error accessing settings: {str(er)}\n\nPlease check bot logs or contact the developer.")
+        try:
+            await e.reply(f"❌ Error accessing settings: {str(er)}\n\nPlease check bot logs or contact the developer.")
+        except Exception as reply_error:
+            LOGS.error(f"Failed to send error reply: {reply_error}")
 
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):
@@ -139,6 +148,24 @@ async def _(e):
     """Simple test command to verify bot responsiveness"""
     await e.reply("✅ Bot is responding! Test successful.")
 
+@bot.on(events.NewMessage(pattern="/test_buttons"))
+async def _(e):
+    """Test button functionality"""
+    try:
+        from telethon import Button
+        LOGS.info("Testing button creation...")
+
+        test_buttons = [
+            [Button.inline("Test Button 1", data="test_1")],
+            [Button.inline("Test Button 2", data="test_2")]
+        ]
+
+        await e.reply("🧪 **Button Test**\n\nTesting inline buttons:", buttons=test_buttons)
+        LOGS.info("Button test successful")
+    except Exception as er:
+        LOGS.error(f"Button test error: {er}", exc_info=True)
+        await e.reply(f"❌ Button test failed: {str(er)}")
+
 # --- Callback Handlers ---
 
 @bot.on(events.CallbackQuery(data=re.compile(b"stats(.*)")))
@@ -149,6 +176,17 @@ async def _(e): await skip(e)
 
 @bot.on(events.CallbackQuery(data=re.compile(b"ihelp")))
 async def _(e): await ihelp(e)
+
+@bot.on(events.CallbackQuery(data=re.compile(b"test_(.*)")))
+async def _(e):
+    """Handle test button callbacks"""
+    try:
+        data = e.data.decode()
+        await e.answer(f"✅ Button {data} clicked successfully!")
+        LOGS.info(f"Test button callback: {data}")
+    except Exception as er:
+        LOGS.error(f"Test button callback error: {er}")
+        await e.answer("❌ Button test failed")
 
 @bot.on(events.CallbackQuery(data=re.compile(b"beck")))
 async def _(e): await beck(e)

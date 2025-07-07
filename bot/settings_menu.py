@@ -12,7 +12,10 @@ class SettingsMenu:
     async def show_main_menu(self, event, user_id: int):
         """Show the main settings menu"""
         try:
+            LOGS.info(f"Showing main settings menu for user {user_id}")
+
             if not OWNER or str(user_id) not in OWNER.split():
+                LOGS.warning(f"User {user_id} denied access to settings - not in owner list")
                 return await event.reply("❌ You don't have permission to access settings.")
 
             # Check if settings manager is properly initialized
@@ -20,7 +23,9 @@ class SettingsMenu:
                 LOGS.error("Settings manager not initialized")
                 return await event.reply("❌ Settings system not initialized. Please restart the bot.")
 
+            LOGS.info("Getting active preset for settings menu")
             active_preset = self.settings_manager.get_setting("active_preset", user_id=user_id) or "balanced"
+            LOGS.info(f"Active preset: {active_preset}")
 
             menu_text = (
                 "⚙️ **Bot Settings Menu**\n\n"
@@ -29,26 +34,55 @@ class SettingsMenu:
                 "Select a category to configure:"
             )
 
-            buttons = [
-                [Button.inline("🎬 Compression Presets", data="settings_presets")],
-                [Button.inline("🔧 Custom Compression", data="settings_custom")],
-                [Button.inline("📤 Output Settings", data="settings_output")],
-                [Button.inline("📸 Preview & Screenshots", data="settings_preview")],
-                [Button.inline("⚡ Advanced Config", data="settings_advanced")],
-                [Button.inline("🖼️ Thumbnail Settings", data="settings_thumbnail")],
-                [Button.inline("📊 Current Settings", data="settings_current")],
-                [Button.inline("🔄 Reset to Defaults", data="settings_reset")],
-                [Button.inline("❌ Close", data="settings_close")]
-            ]
+            LOGS.info("Creating settings menu buttons")
+            try:
+                buttons = [
+                    [Button.inline("🎬 Compression Presets", data="settings_presets")],
+                    [Button.inline("🔧 Custom Compression", data="settings_custom")],
+                    [Button.inline("📤 Output Settings", data="settings_output")],
+                    [Button.inline("📸 Preview & Screenshots", data="settings_preview")],
+                    [Button.inline("⚡ Advanced Config", data="settings_advanced")],
+                    [Button.inline("🖼️ Thumbnail Settings", data="settings_thumbnail")],
+                    [Button.inline("📊 Current Settings", data="settings_current")],
+                    [Button.inline("🔄 Reset to Defaults", data="settings_reset")],
+                    [Button.inline("❌ Close", data="settings_close")]
+                ]
+                LOGS.info(f"Created {len(buttons)} button rows")
+            except Exception as button_error:
+                LOGS.error(f"Error creating buttons: {button_error}")
+                # Fallback to simple buttons
+                buttons = [
+                    [Button.inline("🎬 Presets", data="settings_presets")],
+                    [Button.inline("❌ Close", data="settings_close")]
+                ]
 
-            if hasattr(event, 'edit'):
+            LOGS.info("Preparing to send settings menu")
+
+            # Check if this is a callback query (has edit method) or new message
+            if hasattr(event, 'edit') and callable(getattr(event, 'edit', None)):
+                LOGS.info("Editing existing message with settings menu")
                 await event.edit(menu_text, buttons=buttons)
-            else:
+            elif hasattr(event, 'reply') and callable(getattr(event, 'reply', None)):
+                # For new messages, use reply
+                LOGS.info("Replying with new settings menu message")
                 await event.reply(menu_text, buttons=buttons)
+            else:
+                # Fallback - try to send as edit first, then reply
+                LOGS.warning("Unknown event type, trying edit first")
+                try:
+                    await event.edit(menu_text, buttons=buttons)
+                except Exception as edit_error:
+                    LOGS.warning(f"Edit failed: {edit_error}, trying reply")
+                    await event.reply(menu_text, buttons=buttons)
+
+            LOGS.info("Settings menu sent successfully")
 
         except Exception as e:
             LOGS.error(f"Error showing main settings menu: {e}", exc_info=True)
-            await event.reply("❌ Error loading settings menu. Please check bot logs.")
+            try:
+                await event.reply("❌ Error loading settings menu. Please check bot logs.")
+            except Exception as reply_error:
+                LOGS.error(f"Failed to send error message: {reply_error}")
     
     async def show_compression_presets(self, event, user_id: int):
         """Show compression presets menu"""
