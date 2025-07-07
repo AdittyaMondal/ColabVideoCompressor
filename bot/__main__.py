@@ -14,6 +14,8 @@ from .worker import (
     toggle_upload_mode, custom_encoder, toggle_watermark
 )
 from .stuff import start, up, help, usage, ihelp, beck
+from .settings_menu import settings_menu
+from .settings_handlers import settings_handlers
 
 LOGS.info("Starting Enhanced Video Compressor Bot...")
 
@@ -60,6 +62,9 @@ async def _(e): await toggle_watermark(e)
 @bot.on(events.NewMessage(pattern="/custom"))
 async def _(e): await custom_encoder(e)
 
+@bot.on(events.NewMessage(pattern="/settings"))
+async def _(e): await settings_menu.show_main_menu(e, e.sender_id)
+
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):
     if str(e.sender_id) not in OWNER.split(): return
@@ -88,6 +93,29 @@ async def _(e): await ihelp(e)
 
 @bot.on(events.CallbackQuery(data=re.compile(b"beck")))
 async def _(e): await beck(e)
+
+@bot.on(events.CallbackQuery())
+async def _(e):
+    """Handle settings and other callback queries"""
+    try:
+        data = e.data.decode()
+        if data.startswith("settings_") or data.startswith("preset_") or data.startswith("custom_") or \
+           data.startswith("output_") or data.startswith("preview_") or data.startswith("advanced_") or \
+           data.startswith("thumb_") or data.startswith("set_") or data.startswith("confirm_"):
+            await settings_handlers.handle_settings_callback(e)
+        else:
+            # Let other handlers process their callbacks
+            pass
+    except Exception as er:
+        LOGS.error(f"Settings callback error: {er}", exc_info=True)
+
+# --- Text Input Handler for Settings ---
+
+@bot.on(events.NewMessage(incoming=True, func=lambda e: not e.media and not e.text.startswith('/') and str(e.sender_id) in OWNER.split()))
+async def _(e):
+    """Handle text input for settings configuration"""
+    if await settings_handlers.handle_text_input(e, e.sender_id):
+        return  # Text was processed as settings input
 
 # --- Media Handler ---
 

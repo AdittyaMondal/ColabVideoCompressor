@@ -97,6 +97,7 @@ async def help(event):
         "• `/help` - Show this help message\n"
         "• `/ping` - Check bot response\n"
         "• `/status` - Show bot status\n"
+        "• `/settings` - Configure bot settings\n"
         "• `/link` - Process video from URL\n"
         "• `/watermark` - Toggle watermark on/off\n"
         "• `/toggle_upload_mode` - Switch upload mode\n"
@@ -105,7 +106,12 @@ async def help(event):
         "1. Send or forward a video file\n"
         "2. Bot will compress it using GPU (if available)\n"
         "3. Multiple files are handled via queue\n"
-        "4. Progress and stats are shown in real-time"
+        "4. Progress and stats are shown in real-time\n\n"
+        "**New Features:**\n"
+        "• Use `/settings` to configure all compression options\n"
+        "• Change presets, quality, resolution, and more\n"
+        "• Real-time thumbnail management\n"
+        "• Per-user settings persistence"
     )
 
 async def ihelp(event):
@@ -117,16 +123,19 @@ async def ihelp(event):
         "• `/help` - Show this help message\n"
         "• `/ping` - Check bot response\n"
         "• `/status` - Show bot status\n"
+        "• `/settings` - Configure bot settings\n"
         "• `/link` - Process video from URL\n"
         "• `/watermark` - Toggle watermark on/off\n"
         "• `/toggle_upload_mode` - Switch upload mode\n"
         "• `/usage` - Show system stats\n\n"
         "**Features:**\n"
         "• GPU-accelerated encoding\n"
+        "• Dynamic settings management\n"
         "• Queue system\n"
         "• Progress tracking\n"
         "• URL support\n"
-        "• Hardware detection",
+        "• Hardware detection\n"
+        "• Real-time thumbnail management",
         buttons=[Button.inline("🔙 BACK", data="beck")]
     )
 

@@ -1,11 +1,7 @@
 from telethon import TelegramClient
 
 # Import from config which is now the base for LOGS and settings
-from .config import (
-    LOGS, APP_ID, API_HASH, BOT_TOKEN, OWNER, GPU_TYPE, V_CODEC, V_PRESET, V_QP,
-    V_SCALE, V_FPS, A_BITRATE, WATERMARK_ENABLED, FILENAME_TEMPLATE,
-    AUTO_DELETE_ORIGINAL, ENABLE_HARDWARE_ACCELERATION
-)
+from .config import LOGS, APP_ID, API_HASH, BOT_TOKEN, OWNER, GPU_TYPE
 
 try:
     if not all([APP_ID, API_HASH, BOT_TOKEN, OWNER]):
@@ -18,13 +14,13 @@ except Exception as e:
 
 async def startup():
     """Send startup message to bot owners and log config"""
+    # Initialize settings manager
+    from .settings import settings_manager
+
     LOGS.info("--- Configuration ---")
-    LOGS.info(f"GPU Detection: {GPU_TYPE.upper()} (HW Accel: {'Enabled' if ENABLE_HARDWARE_ACCELERATION else 'Disabled'})")
-    LOGS.info(f"Encoding: {V_CODEC}, Preset: {V_PRESET}, Quality: {V_QP}")
-    LOGS.info(f"Output: {V_SCALE}p @ {V_FPS}fps, Audio: {A_BITRATE}")
-    LOGS.info(f"Watermark: {'Enabled' if WATERMARK_ENABLED else 'Disabled'}")
-    LOGS.info(f"Filename Template: {FILENAME_TEMPLATE}")
-    LOGS.info(f"Auto-delete Original: {AUTO_DELETE_ORIGINAL}")
+    LOGS.info(f"GPU Detection: {GPU_TYPE.upper()}")
+    LOGS.info(f"Settings System: Dynamic settings enabled")
+    LOGS.info(f"Default Preset: {settings_manager.get_setting('active_preset') or 'balanced'}")
     LOGS.info("---------------------")
 
     owners = [owner_id.strip() for owner_id in OWNER.split()]

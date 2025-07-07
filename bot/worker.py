@@ -10,20 +10,20 @@ from html_telegraph_poster import TelegraphPoster
 
 from .FastTelethon import download_file, upload_file
 from .funcn import bot_state, code, ts, hbs, progress, info, validate_file_path
-from .config import (
-    LOGS, OWNER, MAX_FILE_SIZE, MAX_QUEUE_SIZE, FILENAME_TEMPLATE, AUTO_DELETE_ORIGINAL,
-    GPU_TYPE, V_CODEC, V_PRESET, V_PROFILE, V_LEVEL, V_QP, V_SCALE, V_FPS, A_BITRATE,
-    WATERMARK_ENABLED, WATERMARK_TEXT, WATERMARK_POSITION, ENABLE_HARDWARE_ACCELERATION,
-    DEFAULT_UPLOAD_MODE, ENABLE_SCREENSHOTS, SCREENSHOT_COUNT, ENABLE_VIDEO_PREVIEW,
-    PREVIEW_DURATION, PREVIEW_QUALITY
-)
+from .config import LOGS, OWNER, GPU_TYPE
+from .settings import settings_manager
 
 
-def get_watermark_filter():
+def get_watermark_filter(user_id: int = None):
     """Constructs the watermark filter part of the FFmpeg command."""
-    LOGS.info(f"Watermark check - ENABLED: {WATERMARK_ENABLED}, TEXT: '{WATERMARK_TEXT}', POSITION: {WATERMARK_POSITION}")
+    advanced_settings = settings_manager.get_setting("advanced_settings", user_id=user_id)
+    watermark_enabled = advanced_settings.get("watermark_enabled", False)
+    watermark_text = advanced_settings.get("watermark_text", "Compressed by Bot")
+    watermark_position = advanced_settings.get("watermark_position", "bottom-right")
 
-    if not WATERMARK_ENABLED:
+    LOGS.info(f"Watermark check - ENABLED: {watermark_enabled}, TEXT: '{watermark_text}', POSITION: {watermark_position}")
+
+    if not watermark_enabled:
         LOGS.info("Watermark is disabled, skipping filter creation")
         return ""
 
@@ -34,9 +34,9 @@ def get_watermark_filter():
         "bottom-right": "x=w-text_w-10:y=h-text_h-10",
         "center": "x=(w-text_w)/2:y=(h-text_h)/2"
     }
-    position = position_map.get(WATERMARK_POSITION, "x=w-text_w-10:y=h-text_h-10")
-    escaped_text = WATERMARK_TEXT.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\%")
-    
+    position = position_map.get(watermark_position, "x=w-text_w-10:y=h-text_h-10")
+    escaped_text = watermark_text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\%")
+
     # Enhanced watermark with better visibility and styling
     watermark_filter = (
         f"drawtext=text='{escaped_text}'"
@@ -57,34 +57,47 @@ async def process_compression(event, dl, start_time):
     out = None
     process = None
     try:
+        user_id = event.sender_id
         compress_start_time = datetime.now()
         original_name = Path(dl).stem
         os.makedirs("encode/", exist_ok=True)
-        
+
+        # Get dynamic settings for this user
+        compression_settings = settings_manager.get_active_compression_settings(user_id)
+        output_settings = settings_manager.get_setting("output_settings", user_id=user_id)
+
+        filename_template = output_settings.get("filename_template", "{original_name} [{resolution} {codec}]")
+        v_preset = compression_settings.get("v_preset", "medium")
+        v_scale = compression_settings.get("v_scale", 1080)
+        v_codec = compression_settings.get("v_codec", "libx264")
+
         filename_map = {
-            'original_name': original_name, 'preset': V_PRESET,
-            'resolution': f"{V_SCALE}p" if V_SCALE > 0 else "source",
-            'codec': V_CODEC.replace('_nvenc', '').replace('lib', ''),
+            'original_name': original_name, 'preset': v_preset,
+            'resolution': f"{v_scale}p" if v_scale > 0 else "source",
+            'codec': v_codec.replace('_nvenc', '').replace('lib', ''),
             'date': compress_start_time.strftime("%Y-%m-%d"),
             'time': compress_start_time.strftime("%H-%M-%S"),
         }
-        new_filename_base = FILENAME_TEMPLATE.format(**filename_map)
+        new_filename_base = filename_template.format(**filename_map)
         sanitized_filename = re.sub(r'[\\/*?:"<>|]', "", new_filename_base)
         out = f"encode/{sanitized_filename}.mkv"
         
         dtime = ts(int((compress_start_time - start_time).total_seconds()) * 1000)
-        
+
         wah = code(f"{out};{dl};{event.id}")
-        
+
         # Enhanced compression status with more details
         gpu_info = f"🚀 {GPU_TYPE.upper()}" if GPU_TYPE != "cpu" else "💻 CPU"
-        codec_info = V_CODEC.replace('_nvenc', ' (HW)').replace('lib', '').upper()
+        codec_info = v_codec.replace('_nvenc', ' (HW)').replace('lib', '').upper()
+
+        advanced_settings = settings_manager.get_setting("advanced_settings", user_id=user_id)
+        watermark_enabled = advanced_settings.get("watermark_enabled", False)
 
         status_parts = [f"📥 Downloaded in {dtime}", f"🔄 Compressing with {codec_info}", f"⚙️ Engine: {gpu_info}"]
-        if WATERMARK_ENABLED:
+        if watermark_enabled:
             status_parts.append(f"🏷️ Adding watermark")
-        if V_SCALE > 0:
-            status_parts.append(f"📐 Target: {V_SCALE}p")
+        if v_scale > 0:
+            status_parts.append(f"📐 Target: {v_scale}p")
 
         status_msg = "\n".join([f"`{part}`" for part in status_parts])
 
@@ -94,49 +107,57 @@ async def process_compression(event, dl, start_time):
         )
 
         # Determine if the codec is hardware-accelerated
-        is_hardware_codec = '_nvenc' in V_CODEC
+        is_hardware_codec = '_nvenc' in v_codec
+        enable_hardware_acceleration = compression_settings.get("enable_hardware_acceleration", True)
 
         # FFmpeg Command Builder
         cmd_parts = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error']
-        
+
+        # Get all needed settings
+        v_profile = compression_settings.get("v_profile", "high")
+        v_level = compression_settings.get("v_level", "4.0")
+        v_qp = compression_settings.get("v_qp", 26)
+        v_fps = compression_settings.get("v_fps", 30)
+        a_bitrate = compression_settings.get("a_bitrate", "192k")
+
         # Input options (before -i)
-        if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
+        if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
             cmd_parts.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
-        
+
         # Input file
         cmd_parts.extend(['-i', f'"{dl}"'])
-        
+
         # Output options (after -i, before output file)
         filters = []
-        if V_SCALE != -1:
-            if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
-                filters.append(f'scale_cuda=-2:{V_SCALE}')
+        if v_scale != -1:
+            if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
+                filters.append(f'scale_cuda=-2:{v_scale}')
             else:
-                filters.append(f'scale=-2:{V_SCALE}:force_original_aspect_ratio=decrease')
-        
-        if WATERMARK_ENABLED:
-            watermark_filter = get_watermark_filter()
+                filters.append(f'scale=-2:{v_scale}:force_original_aspect_ratio=decrease')
+
+        if watermark_enabled:
+            watermark_filter = get_watermark_filter(user_id)
             if watermark_filter:  # Only add if watermark filter is valid
-                if GPU_TYPE == "nvidia" and ENABLE_HARDWARE_ACCELERATION and is_hardware_codec:
+                if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
                     # For hardware acceleration, we need to download from GPU, apply watermark, then upload back
                     filters.append(f'hwdownload,format=nv12,{watermark_filter},hwupload_cuda')
                 else:
                     # For software encoding, apply watermark directly
                     filters.append(watermark_filter)
-        
+
         if filters:
             cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
-        
+
         # Encoding parameters with custom settings
         cmd_parts.extend([
-            '-c:v', V_CODEC,          # libx265
-            '-preset', V_PRESET,      # p3
-            '-profile:v', V_PROFILE,  # high
-            '-level:v', V_LEVEL,
-            '-crf', str(V_QP),        # 26
-            '-r', str(V_FPS),         # 120
+            '-c:v', v_codec,          # libx265
+            '-preset', v_preset,      # p3
+            '-profile:v', v_profile,  # high
+            '-level:v', v_level,
+            '-crf', str(v_qp),        # 26
+            '-r', str(v_fps),         # 120
             '-c:a', 'aac',
-            '-b:a', A_BITRATE,        # 384k
+            '-b:a', a_bitrate,        # 384k
             '-movflags', '+faststart',
             f'"{out}"'
         ])
@@ -155,15 +176,19 @@ async def process_compression(event, dl, start_time):
             return await event.edit(f"❌ **COMPRESSION FAILED**\nOutput file not created or empty.\n\n**FFmpeg Logs:**\n`{stderr_output[:3000]}`")
         
         # Generate thumbnail, preview, and screenshots
-        thumbnail_path = await generate_thumbnail(out)
+        thumbnail_path = await generate_thumbnail(out, user_id)
         preview_path, screenshots = None, []
 
-        if ENABLE_VIDEO_PREVIEW:
-            preview_path = await generate_preview(out)
+        preview_settings = settings_manager.get_setting("preview_settings", user_id=user_id)
+        enable_video_preview = preview_settings.get("enable_video_preview", False)
+        enable_screenshots = preview_settings.get("enable_screenshots", False)
 
-        if ENABLE_SCREENSHOTS:
-            screenshots = await generate_screenshots(out)
-            
+        if enable_video_preview:
+            preview_path = await generate_preview(out, user_id)
+
+        if enable_screenshots:
+            screenshots = await generate_screenshots(out, user_id)
+
         await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots, thumbnail_path)
         
     except Exception as e:
@@ -181,16 +206,22 @@ async def process_compression(event, dl, start_time):
         
         # Clean up original file based on settings
         if dl and os.path.exists(dl) and validate_file_path(dl):
-            if AUTO_DELETE_ORIGINAL and successful_compression:
+            output_settings = settings_manager.get_setting("output_settings", user_id=event.sender_id)
+            auto_delete_original = output_settings.get("auto_delete_original", False)
+            if auto_delete_original and successful_compression:
                 try:
                     os.remove(dl)
                 except OSError as e:
                     LOGS.error(f"Failed to delete original file {dl}: {e}")
 
 
-async def generate_preview(video_path):
+async def generate_preview(video_path, user_id: int = None):
     """Generate a short preview clip from the video"""
     try:
+        preview_settings = settings_manager.get_setting("preview_settings", user_id=user_id)
+        preview_duration_setting = preview_settings.get("preview_duration", 10)
+        preview_quality = preview_settings.get("preview_quality", 28)
+
         preview_output = f"encode/{Path(video_path).stem}_preview.mp4"
 
         # Get video duration first
@@ -206,7 +237,7 @@ async def generate_preview(video_path):
         LOGS.info(f"Video duration: {duration:.2f} seconds")
 
         # Calculate preview parameters
-        preview_duration = min(duration, PREVIEW_DURATION)
+        preview_duration = min(duration, preview_duration_setting)
 
         # Start from 10% into the video or 5 seconds, whichever is smaller
         start_time = min(duration * 0.1, 5.0) if duration > 10 else 0
@@ -219,7 +250,7 @@ async def generate_preview(video_path):
 
         # Generate preview with optimized settings
         cmd = (f"ffmpeg -y -ss {start_time} -i \"{video_path}\" -t {preview_duration} "
-               f"-c:v libx264 -crf {PREVIEW_QUALITY} -preset veryfast "
+               f"-c:v libx264 -crf {preview_quality} -preset veryfast "
                f"-vf \"scale=-2:720:force_original_aspect_ratio=decrease\" "
                f"-c:a aac -b:a 128k -movflags +faststart \"{preview_output}\"")
 
@@ -238,10 +269,13 @@ async def generate_preview(video_path):
         LOGS.error(f"Error generating preview: {e}", exc_info=True)
         return None
 
-async def generate_screenshots(video_path):
+async def generate_screenshots(video_path, user_id: int = None):
     """Generate multiple screenshots from video at different timestamps"""
     screenshots = []
     try:
+        preview_settings = settings_manager.get_setting("preview_settings", user_id=user_id)
+        screenshot_count = preview_settings.get("screenshot_count", 5)
+
         # Get video duration first
         duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
         process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -252,7 +286,7 @@ async def generate_screenshots(video_path):
             return []
 
         duration = float(stdout.decode().strip())
-        LOGS.info(f"Generating {SCREENSHOT_COUNT} screenshots from {duration:.2f}s video")
+        LOGS.info(f"Generating {screenshot_count} screenshots from {duration:.2f}s video")
 
         # Calculate timestamps for screenshots (avoid first and last 5% of video)
         start_offset = duration * 0.05  # Skip first 5%
@@ -264,9 +298,9 @@ async def generate_screenshots(video_path):
             usable_duration = duration
             start_offset = 0
 
-        interval = usable_duration / SCREENSHOT_COUNT
+        interval = usable_duration / screenshot_count
 
-        for i in range(SCREENSHOT_COUNT):
+        for i in range(screenshot_count):
             timestamp = start_offset + (interval * i) + (interval / 2)  # Take from middle of each interval
             screenshot_path = f"encode/screenshot_{i+1}.jpg"
 
@@ -285,7 +319,7 @@ async def generate_screenshots(video_path):
             else:
                 LOGS.error(f"Failed to generate screenshot {i+1} at {timestamp:.2f}s: {stderr.decode(errors='ignore')}")
 
-        LOGS.info(f"Successfully generated {len(screenshots)}/{SCREENSHOT_COUNT} screenshots")
+        LOGS.info(f"Successfully generated {len(screenshots)}/{screenshot_count} screenshots")
         return screenshots
 
     except Exception as e:
@@ -293,35 +327,59 @@ async def generate_screenshots(video_path):
         return []
 
 
-async def generate_thumbnail(video_path):
+async def generate_thumbnail(video_path, user_id: int = None):
     """Generate a thumbnail image from video for Telegram upload"""
     try:
+        thumbnail_settings = settings_manager.get_setting("thumbnail_settings", user_id=user_id)
+        auto_generate = thumbnail_settings.get("auto_generate_thumbnail", True)
+        custom_url = thumbnail_settings.get("custom_thumbnail_url", "")
+        timestamp_percent = thumbnail_settings.get("thumbnail_timestamp_percent", 10)
+
         thumb_path = "thumb.jpg"
 
-        # Get video duration first
-        duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
-        process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await process.communicate()
+        # If custom URL is provided and auto-generate is disabled, try to download it
+        if custom_url and not auto_generate:
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(custom_url) as response:
+                        if response.status == 200:
+                            with open(thumb_path, 'wb') as f:
+                                f.write(await response.read())
+                            LOGS.info(f"Custom thumbnail downloaded: {thumb_path}")
+                            return thumb_path
+            except Exception as e:
+                LOGS.error(f"Failed to download custom thumbnail: {e}")
+                # Fall back to auto-generation
 
-        if process.returncode != 0:
-            LOGS.error("Failed to get video duration for thumbnail")
-            return None
+        # Auto-generate thumbnail from video
+        if auto_generate:
+            # Get video duration first
+            duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
+            process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await process.communicate()
 
-        duration = float(stdout.decode().strip())
-        # Take thumbnail from 10% into the video or 5 seconds, whichever is smaller
-        timestamp = min(duration * 0.1, 5.0)
+            if process.returncode != 0:
+                LOGS.error("Failed to get video duration for thumbnail")
+                return None
 
-        # Generate thumbnail with specific size for Telegram (320x320 max, maintaining aspect ratio)
-        cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -vf \"scale=320:320:force_original_aspect_ratio=decrease\" -q:v 2 \"{thumb_path}\""
-        process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
-        _, stderr = await process.communicate()
+            duration = float(stdout.decode().strip())
+            # Take thumbnail from specified percentage into the video
+            timestamp = duration * (timestamp_percent / 100.0)
 
-        if process.returncode == 0 and os.path.exists(thumb_path):
-            LOGS.info(f"Thumbnail generated successfully: {thumb_path}")
-            return thumb_path
-        else:
-            LOGS.error(f"Failed to generate thumbnail: {stderr.decode(errors='ignore')}")
-            return None
+            # Generate thumbnail with specific size for Telegram (320x320 max, maintaining aspect ratio)
+            cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -vf \"scale=320:320:force_original_aspect_ratio=decrease\" -q:v 2 \"{thumb_path}\""
+            process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+            _, stderr = await process.communicate()
+
+            if process.returncode == 0 and os.path.exists(thumb_path):
+                LOGS.info(f"Thumbnail generated successfully: {thumb_path}")
+                return thumb_path
+            else:
+                LOGS.error(f"Failed to generate thumbnail: {stderr.decode(errors='ignore')}")
+                return None
+
+        return None
 
     except Exception as e:
         LOGS.error(f"Error generating thumbnail: {e}", exc_info=True)
@@ -438,14 +496,18 @@ async def dl_link(event):
     parts = event.text.split(maxsplit=2)
     if len(parts) < 2 or not parts[1].startswith(('http://', 'https://')):
         return await event.reply("❌ **Usage:** `/link <url> [filename.ext]`")
-    
+
     link = parts[1]
-    
+
+    # Get dynamic queue size setting
+    output_settings = settings_manager.get_setting("output_settings", user_id=event.sender_id)
+    max_queue_size = output_settings.get("max_queue_size", 15)
+
     if bot_state.is_working() or bot_state.queue_size() > 0:
         if not bot_state.add_to_queue(link, event):
-            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists.")
+            return await event.reply(f"❌ Queue is full (max {max_queue_size}) or item already exists.")
         return await event.reply(f"✅ Added to queue at position #{bot_state.queue_size()}")
-    
+
     name = parts[2] if len(parts) > 2 else ""
     await process_link_download(event, link, name)
 
@@ -480,22 +542,22 @@ async def toggle_watermark(event):
     if str(event.sender_id) not in OWNER.split():
         return
 
-    # Import config module to modify the global variable
-    from . import config
+    user_id = event.sender_id
+    advanced_settings = settings_manager.get_setting("advanced_settings", user_id=user_id)
+    current_enabled = advanced_settings.get("watermark_enabled", False)
+    watermark_text = advanced_settings.get("watermark_text", "Compressed by Bot")
+    watermark_position = advanced_settings.get("watermark_position", "bottom-right")
 
     # Toggle the watermark setting
-    config.WATERMARK_ENABLED = not config.WATERMARK_ENABLED
+    new_enabled = not current_enabled
+    settings_manager.set_setting("advanced_settings", "watermark_enabled", new_enabled, user_id)
 
-    # Update the global variable in this module too
-    global WATERMARK_ENABLED
-    WATERMARK_ENABLED = config.WATERMARK_ENABLED
-
-    status = "✅ Enabled" if WATERMARK_ENABLED else "❌ Disabled"
+    status = "✅ Enabled" if new_enabled else "❌ Disabled"
     await event.reply(
         f"🏷️ **Watermark Status Updated**\n\n"
         f"**Status**: {status}\n"
-        f"**Text**: `{WATERMARK_TEXT}`\n"
-        f"**Position**: `{WATERMARK_POSITION}`\n\n"
+        f"**Text**: `{watermark_text}`\n"
+        f"**Position**: `{watermark_position}`\n\n"
         f"Changes will apply to new compressions."
     )
 
@@ -527,19 +589,24 @@ async def custom_encoder(event):
 async def encod(event):
     if not event.is_private or not event.media or str(event.sender_id) not in OWNER.split():
         return
-    
+
     doc_attr = getattr(event.media, 'document', None)
     if not (doc_attr and doc_attr.mime_type and doc_attr.mime_type.startswith("video")):
         return
 
-    if doc_attr.size > MAX_FILE_SIZE * 1024 * 1024:
-        return await event.reply(f"❌ File too large: {hbs(doc_attr.size)} > {MAX_FILE_SIZE}MB.")
-    
+    # Get dynamic file size setting
+    output_settings = settings_manager.get_setting("output_settings", user_id=event.sender_id)
+    max_file_size = output_settings.get("max_file_size", 4000)
+    max_queue_size = output_settings.get("max_queue_size", 15)
+
+    if doc_attr.size > max_file_size * 1024 * 1024:
+        return await event.reply(f"❌ File too large: {hbs(doc_attr.size)} > {max_file_size}MB.")
+
     if bot_state.is_working() or bot_state.queue_size() > 0:
         if not bot_state.add_to_queue(doc_attr.id, event):
-            return await event.reply(f"❌ Queue is full (max {MAX_QUEUE_SIZE}) or item already exists.")
+            return await event.reply(f"❌ Queue is full (max {max_queue_size}) or item already exists.")
         return await event.reply(f"`✅ Added to queue at position #{bot_state.queue_size()}`")
-    
+
     await process_file_encoding(event)
 
 
