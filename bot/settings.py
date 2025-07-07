@@ -75,9 +75,9 @@ class SettingsManager:
             
             # Thumbnail Settings
             "thumbnail_settings": {
-                "custom_thumbnail_url": "",
-                "auto_generate_thumbnail": True,
-                "thumbnail_timestamp_percent": 10,  # 10% into video
+                "custom_url": "",
+                "auto_generate": True,
+                "timestamp": "00:00:10",  # Default timestamp
             }
         }
     

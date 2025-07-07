@@ -60,6 +60,8 @@ class SettingsHandlers:
                 await self.handle_resolution_setting(event, user_id, data)
             elif data.startswith("set_audio_"):
                 await self.handle_audio_setting(event, user_id, data)
+            elif data.startswith("set_watermark_pos_"):
+                await self.handle_watermark_position(event, user_id, data)
             elif data == "confirm_reset":
                 await self.handle_confirm_reset(event, user_id)
             else:
@@ -262,6 +264,37 @@ class SettingsHandlers:
                 value = int(text)
                 if 1 <= value <= 50:
                     return self.settings_manager.set_setting("output_settings", "max_queue_size", value, user_id)
+            elif setting_key == "preview_count":
+                value = int(text)
+                if 1 <= value <= 20:
+                    return self.settings_manager.set_setting("preview_settings", "screenshot_count", value, user_id)
+            elif setting_key == "preview_duration":
+                value = int(text)
+                if 5 <= value <= 60:
+                    return self.settings_manager.set_setting("preview_settings", "preview_duration", value, user_id)
+            elif setting_key == "preview_quality":
+                value = int(text)
+                if 18 <= value <= 35:
+                    return self.settings_manager.set_setting("preview_settings", "preview_quality", value, user_id)
+            elif setting_key == "thumb_custom_url":
+                if text and text.startswith(('http://', 'https://')):
+                    return self.settings_manager.set_setting("thumbnail_settings", "custom_url", text, user_id)
+            elif setting_key == "thumb_timestamp":
+                # Basic timestamp validation (HH:MM:SS format)
+                import re
+                if re.match(r'^\d{1,2}:\d{2}:\d{2}$', text):
+                    return self.settings_manager.set_setting("thumbnail_settings", "timestamp", text, user_id)
+            elif setting_key == "advanced_watermark_text":
+                if text and len(text) <= 50:
+                    return self.settings_manager.set_setting("advanced_settings", "watermark_text", text, user_id)
+            elif setting_key == "advanced_upload_conn":
+                value = int(text)
+                if 1 <= value <= 10:
+                    return self.settings_manager.set_setting("advanced_settings", "upload_connections", value, user_id)
+            elif setting_key == "advanced_progress":
+                value = int(text)
+                if 1 <= value <= 30:
+                    return self.settings_manager.set_setting("advanced_settings", "progress_update_interval", value, user_id)
             # Add more text input processors as needed
             
         except ValueError:
@@ -312,6 +345,142 @@ class SettingsHandlers:
             await self.settings_menu.show_custom_compression(event, user_id)
         else:
             await event.answer("❌ Failed to set audio bitrate", alert=True)
+
+    async def handle_preview_setting(self, event, user_id: int, data: str):
+        """Handle preview settings"""
+        setting = data.replace("preview_", "")
+
+        if setting == "screenshots":
+            await self.toggle_screenshots(event, user_id)
+        elif setting == "count":
+            await self.request_text_input(event, user_id, "preview_count",
+                "📸 **Set Screenshot Count**\n\nEnter number of screenshots (1-20):")
+        elif setting == "video":
+            await self.toggle_video_preview(event, user_id)
+        elif setting == "duration":
+            await self.request_text_input(event, user_id, "preview_duration",
+                "⏱️ **Set Preview Duration**\n\nEnter duration in seconds (5-60):")
+        elif setting == "quality":
+            await self.request_text_input(event, user_id, "preview_quality",
+                "🎯 **Set Preview Quality (CRF)**\n\nEnter CRF value (18-35):")
+
+    async def toggle_screenshots(self, event, user_id: int):
+        """Toggle screenshot generation"""
+        current = self.settings_manager.get_setting("preview_settings", "enable_screenshots", user_id)
+        new_value = not current
+
+        if self.settings_manager.set_setting("preview_settings", "enable_screenshots", new_value, user_id):
+            status = "✅ Enabled" if new_value else "❌ Disabled"
+            await event.answer(f"Screenshots {status}")
+            await self.settings_menu.show_preview_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to toggle setting", alert=True)
+
+    async def toggle_video_preview(self, event, user_id: int):
+        """Toggle video preview generation"""
+        current = self.settings_manager.get_setting("preview_settings", "enable_video_preview", user_id)
+        new_value = not current
+
+        if self.settings_manager.set_setting("preview_settings", "enable_video_preview", new_value, user_id):
+            status = "✅ Enabled" if new_value else "❌ Disabled"
+            await event.answer(f"Video Preview {status}")
+            await self.settings_menu.show_preview_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to toggle setting", alert=True)
+
+    async def handle_thumbnail_setting(self, event, user_id: int, data: str):
+        """Handle thumbnail settings"""
+        setting = data.replace("thumb_", "")
+
+        if setting == "auto_generate":
+            await self.toggle_auto_thumbnail(event, user_id)
+        elif setting == "custom_url":
+            await self.request_text_input(event, user_id, "thumb_custom_url",
+                "🔗 **Set Custom Thumbnail URL**\n\nEnter image URL:")
+        elif setting == "timestamp":
+            await self.request_text_input(event, user_id, "thumb_timestamp",
+                "⏱️ **Set Thumbnail Timestamp**\n\nEnter timestamp (e.g., 00:01:30):")
+        elif setting == "preview":
+            await self.show_thumbnail_preview(event, user_id)
+        elif setting == "clear_url":
+            await self.clear_custom_thumbnail(event, user_id)
+
+    async def toggle_auto_thumbnail(self, event, user_id: int):
+        """Toggle automatic thumbnail generation"""
+        current = self.settings_manager.get_setting("thumbnail_settings", "auto_generate", user_id)
+        new_value = not current
+
+        if self.settings_manager.set_setting("thumbnail_settings", "auto_generate", new_value, user_id):
+            status = "✅ Enabled" if new_value else "❌ Disabled"
+            await event.answer(f"Auto Thumbnail {status}")
+            await self.settings_menu.show_thumbnail_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to toggle setting", alert=True)
+
+    async def show_thumbnail_preview(self, event, user_id: int):
+        """Show current thumbnail preview"""
+        await event.answer("🖼️ Thumbnail preview feature coming soon!")
+
+    async def clear_custom_thumbnail(self, event, user_id: int):
+        """Clear custom thumbnail URL"""
+        if self.settings_manager.set_setting("thumbnail_settings", "custom_url", "", user_id):
+            await event.answer("✅ Custom thumbnail URL cleared")
+            await self.settings_menu.show_thumbnail_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to clear URL", alert=True)
+
+    async def handle_advanced_setting(self, event, user_id: int, data: str):
+        """Handle advanced settings"""
+        setting = data.replace("advanced_", "")
+
+        if setting == "watermark":
+            await self.toggle_watermark(event, user_id)
+        elif setting == "watermark_text":
+            await self.request_text_input(event, user_id, "advanced_watermark_text",
+                "✏️ **Set Watermark Text**\n\nEnter watermark text:")
+        elif setting == "watermark_pos":
+            await self.show_watermark_position_selection(event, user_id)
+        elif setting == "upload_conn":
+            await self.request_text_input(event, user_id, "advanced_upload_conn",
+                "🔗 **Set Upload Connections**\n\nEnter number of connections (1-10):")
+        elif setting == "progress":
+            await self.request_text_input(event, user_id, "advanced_progress",
+                "⏱️ **Set Progress Update Interval**\n\nEnter interval in seconds (1-30):")
+
+    async def toggle_watermark(self, event, user_id: int):
+        """Toggle watermark"""
+        current = self.settings_manager.get_setting("advanced_settings", "watermark_enabled", user_id)
+        new_value = not current
+
+        if self.settings_manager.set_setting("advanced_settings", "watermark_enabled", new_value, user_id):
+            status = "✅ Enabled" if new_value else "❌ Disabled"
+            await event.answer(f"Watermark {status}")
+            await self.settings_menu.show_advanced_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to toggle setting", alert=True)
+
+    async def show_watermark_position_selection(self, event, user_id: int):
+        """Show watermark position selection"""
+        menu_text = "📍 **Select Watermark Position**\n\nChoose position:"
+
+        buttons = [
+            [Button.inline("↖️ Top Left", data="set_watermark_pos_top-left")],
+            [Button.inline("↗️ Top Right", data="set_watermark_pos_top-right")],
+            [Button.inline("↙️ Bottom Left", data="set_watermark_pos_bottom-left")],
+            [Button.inline("↘️ Bottom Right", data="set_watermark_pos_bottom-right")],
+            [Button.inline("🔙 Back", data="settings_advanced")]
+        ]
+
+        await event.edit(menu_text, buttons=buttons)
+
+    async def handle_watermark_position(self, event, user_id: int, data: str):
+        """Handle watermark position selection"""
+        position = data.replace("set_watermark_pos_", "")
+        if self.settings_manager.set_setting("advanced_settings", "watermark_position", position, user_id):
+            await event.answer(f"✅ Watermark position set to {position}")
+            await self.settings_menu.show_advanced_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to set position", alert=True)
 
     async def handle_confirm_reset(self, event, user_id: int):
         """Handle confirmed settings reset"""
