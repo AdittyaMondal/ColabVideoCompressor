@@ -70,6 +70,7 @@ async def process_compression(event, dl, start_time):
         output_settings = settings_manager.get_setting("output_settings", user_id=user_id)
 
         filename_template = output_settings.get("filename_template", "{original_name} [{resolution} {codec}]")
+        output_format = output_settings.get("output_format", "mkv")
         v_preset = compression_settings.get("v_preset", "medium")
         v_scale = compression_settings.get("v_scale", 1080)
         v_codec = compression_settings.get("v_codec", "libx264")
@@ -83,7 +84,7 @@ async def process_compression(event, dl, start_time):
         }
         new_filename_base = filename_template.format(**filename_map)
         sanitized_filename = re.sub(r'[\\/*?:"<>|]', "", new_filename_base)
-        out = f"encode/{sanitized_filename}.mkv"
+        out = f"encode/{sanitized_filename}.{output_format}"
         
         dtime = ts(int((compress_start_time - start_time).total_seconds()) * 1000)
 
@@ -225,13 +226,15 @@ async def process_compression(event, dl, start_time):
 
 
 async def generate_preview(video_path, user_id: int = None):
-    """Generate a short preview clip from the video"""
+    """Generate a preview compilation from multiple clips throughout the video"""
     try:
         preview_settings = settings_manager.get_setting("preview_settings", user_id=user_id)
-        preview_duration_setting = preview_settings.get("preview_duration", 10)
+        total_preview_duration = preview_settings.get("preview_duration", 10)
         preview_quality = preview_settings.get("preview_quality", 28)
 
         preview_output = f"encode/{Path(video_path).stem}_preview.mp4"
+        temp_dir = "temp/preview_clips"
+        os.makedirs(temp_dir, exist_ok=True)
 
         # Get video duration first
         duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
@@ -245,37 +248,80 @@ async def generate_preview(video_path, user_id: int = None):
         duration = float(stdout.decode().strip())
         LOGS.info(f"Video duration: {duration:.2f} seconds")
 
-        # Calculate preview parameters
-        preview_duration = min(duration, preview_duration_setting)
+        # Calculate clip parameters
+        num_clips = min(8, max(3, int(duration / 120)))  # 3-8 clips based on video length
+        clip_duration = total_preview_duration / num_clips  # Each clip duration
 
-        # Start from 10% into the video or 5 seconds, whichever is smaller
-        start_time = min(duration * 0.1, 5.0) if duration > 10 else 0
+        # Skip first and last 5% of video to avoid intro/outro
+        usable_duration = duration * 0.9
+        start_offset = duration * 0.05
 
-        # Ensure we don't exceed video duration
-        if start_time + preview_duration > duration:
-            start_time = max(0, duration - preview_duration)
+        # Calculate clip start times evenly distributed
+        clip_starts = []
+        for i in range(num_clips):
+            position = start_offset + (i * usable_duration / (num_clips - 1)) if num_clips > 1 else start_offset + usable_duration / 2
+            clip_starts.append(min(position, duration - clip_duration - 1))
 
-        LOGS.info(f"Generating preview: {preview_duration}s starting at {start_time}s")
+        LOGS.info(f"Generating {num_clips} clips of {clip_duration:.1f}s each from {duration:.1f}s video")
 
-        # Generate preview with optimized settings
-        cmd = (f"ffmpeg -y -ss {start_time} -i \"{video_path}\" -t {preview_duration} "
-               f"-c:v libx264 -crf {preview_quality} -preset veryfast "
-               f"-vf \"scale=-2:720:force_original_aspect_ratio=decrease\" "
-               f"-c:a aac -b:a 128k -movflags +faststart \"{preview_output}\"")
+        # Generate individual clips
+        clip_files = []
+        for i, start_time in enumerate(clip_starts):
+            clip_file = f"{temp_dir}/clip_{i:02d}.mp4"
 
-        process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+            cmd = (f"ffmpeg -y -ss {start_time:.2f} -i \"{video_path}\" -t {clip_duration:.2f} "
+                   f"-c:v libx264 -crf {preview_quality} -preset veryfast "
+                   f"-vf \"scale=-2:720:force_original_aspect_ratio=decrease\" "
+                   f"-c:a aac -b:a 128k -avoid_negative_ts make_zero \"{clip_file}\"")
+
+            process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+            _, stderr = await process.communicate()
+
+            if process.returncode == 0 and os.path.exists(clip_file):
+                clip_files.append(clip_file)
+                LOGS.info(f"Clip {i+1}/{num_clips} generated: {clip_file}")
+            else:
+                LOGS.error(f"Failed to generate clip {i+1}: {stderr.decode(errors='ignore')}")
+
+        if not clip_files:
+            LOGS.error("No clips were generated successfully")
+            return None
+
+        # Create concat file for FFmpeg
+        concat_file = f"{temp_dir}/concat_list.txt"
+        with open(concat_file, 'w') as f:
+            for clip_file in clip_files:
+                f.write(f"file '{os.path.abspath(clip_file)}'\n")
+
+        # Concatenate clips into final preview
+        concat_cmd = (f"ffmpeg -y -f concat -safe 0 -i \"{concat_file}\" "
+                     f"-c copy -movflags +faststart \"{preview_output}\"")
+
+        process = await asyncio.create_subprocess_shell(concat_cmd, stderr=asyncio.subprocess.PIPE)
         _, stderr = await process.communicate()
+
+        # Cleanup temporary files
+        for clip_file in clip_files:
+            try:
+                os.remove(clip_file)
+            except:
+                pass
+        try:
+            os.remove(concat_file)
+            os.rmdir(temp_dir)
+        except:
+            pass
 
         if process.returncode == 0 and os.path.exists(preview_output):
             file_size = os.path.getsize(preview_output)
-            LOGS.info(f"Preview generated successfully: {preview_output} ({file_size} bytes)")
+            LOGS.info(f"Preview compilation generated successfully: {preview_output} ({file_size} bytes)")
             return preview_output
         else:
-            LOGS.error(f"Preview generation failed: {stderr.decode(errors='ignore')}")
+            LOGS.error(f"Preview compilation failed: {stderr.decode(errors='ignore')}")
             return None
 
     except Exception as e:
-        LOGS.error(f"Error generating preview: {e}", exc_info=True)
+        LOGS.error(f"Error generating preview compilation: {e}", exc_info=True)
         return None
 
 async def generate_screenshots(video_path, user_id: int = None):
@@ -420,23 +466,29 @@ async def get_video_duration(video_path):
 
 async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None, thumbnail_path=None):
     try:
+        # Store user info before deleting event
+        user_id = event.sender_id
+        chat_id = event.chat_id
+        client = event.client
+
         await event.delete()
-        
+
         compress_end_time = datetime.now()
         comp_time = ts(int((compress_end_time - compress_start_time).total_seconds()) * 1000)
-        
-        nnn = await event.client.send_message(event.chat_id, "`Preparing to upload...`")
-        
+
+        nnn = await client.send_message(chat_id, "`Preparing to upload...`")
+
         # Get upload mode from settings
-        output_settings = settings_manager.get_setting("output_settings", user_id=event.sender_id)
+        output_settings = settings_manager.get_setting("output_settings", user_id=user_id)
+        LOGS.info(f"Output settings for user {user_id}: {output_settings}")
         upload_mode = output_settings.get("default_upload_mode", "Document")
-        LOGS.info(f"Upload mode for user {event.sender_id}: {upload_mode}")
+        LOGS.info(f"Upload mode for user {user_id}: {upload_mode}")
         
         upload_name = Path(out).name
         upload_start_time = time.time()
         with open(out, "rb") as f:
             uploaded_file = await upload_file(
-                client=event.client, file=f, name=upload_name,
+                client=client, file=f, name=upload_name,
                 progress_callback=lambda d, t: progress(d, t, nnn, upload_start_time, "Uploading File", upload_name)
             )
         
@@ -459,20 +511,20 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         if video_duration:
             caption += f"\n🎬 Duration: {duration_str}"
 
-        final_message = await event.client.send_file(
-            event.chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=caption
+        final_message = await client.send_file(
+            chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=caption
         )
         
         if preview_path and os.path.exists(preview_path):
             LOGS.info(f"Sending video preview: {preview_path}")
-            await event.client.send_file(event.chat_id, file=preview_path, caption="**Video Preview**")
+            await client.send_file(chat_id, file=preview_path, caption="**Video Preview**")
             os.remove(preview_path)
         else:
             LOGS.info(f"No preview to send - path: {preview_path}, exists: {os.path.exists(preview_path) if preview_path else False}")
 
         if screenshots and len(screenshots) > 0:
             LOGS.info(f"Sending {len(screenshots)} screenshots")
-            await event.client.send_file(event.chat_id, file=screenshots, caption="**Screenshots**")
+            await client.send_file(chat_id, file=screenshots, caption="**Screenshots**")
             for ss in screenshots:
                 if os.path.exists(ss):
                     os.remove(ss)

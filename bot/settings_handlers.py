@@ -173,6 +173,8 @@ class SettingsHandlers:
         
         if setting == "upload_mode":
             await self.toggle_upload_mode(event, user_id)
+        elif setting == "format":
+            await self.toggle_output_format(event, user_id)
         elif setting == "auto_delete":
             await self.toggle_auto_delete(event, user_id)
         elif setting == "filename":
@@ -189,12 +191,23 @@ class SettingsHandlers:
         """Toggle upload mode between Document and File"""
         current = self.settings_manager.get_setting("output_settings", "default_upload_mode", user_id)
         new_mode = "File" if current == "Document" else "Document"
-        
+
         if self.settings_manager.set_setting("output_settings", "default_upload_mode", new_mode, user_id):
             await event.answer(f"✅ Upload mode: {new_mode}")
             await self.settings_menu.show_output_settings(event, user_id)
         else:
             await event.answer("❌ Failed to change upload mode", alert=True)
+
+    async def toggle_output_format(self, event, user_id: int):
+        """Toggle output format between MKV and MP4"""
+        current = self.settings_manager.get_setting("output_settings", "output_format", user_id)
+        new_format = "mp4" if current == "mkv" else "mkv"
+
+        if self.settings_manager.set_setting("output_settings", "output_format", new_format, user_id):
+            await event.answer(f"✅ Output format: {new_format.upper()}")
+            await self.settings_menu.show_output_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to change output format", alert=True)
 
     async def toggle_auto_delete(self, event, user_id: int):
         """Toggle auto delete original files"""

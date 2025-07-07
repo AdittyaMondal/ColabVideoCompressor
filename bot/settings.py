@@ -49,6 +49,7 @@ class SettingsManager:
                 "filename_template": "{original_name} [{resolution} {codec}]",
                 "auto_delete_original": False,
                 "default_upload_mode": "Document",
+                "output_format": "mkv",  # mkv or mp4
                 "max_file_size": 4000,
                 "max_queue_size": 15,
             },

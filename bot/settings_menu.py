@@ -142,6 +142,7 @@ class SettingsMenu:
             "📤 **Output Settings**\n\n"
             f"**Filename Template**: `{output_settings.get('filename_template', '{original_name} [{resolution} {codec}]')}`\n"
             f"**Upload Mode**: `{output_settings.get('default_upload_mode', 'Document')}`\n"
+            f"**Output Format**: `{output_settings.get('output_format', 'mkv').upper()}`\n"
             f"**Auto Delete Original**: `{'✅' if output_settings.get('auto_delete_original') else '❌'}`\n"
             f"**Max File Size**: `{output_settings.get('max_file_size', 4000)}MB`\n"
             f"**Max Queue Size**: `{output_settings.get('max_queue_size', 15)}`\n\n"
@@ -151,6 +152,7 @@ class SettingsMenu:
         buttons = [
             [Button.inline("📝 Filename Template", data="output_filename")],
             [Button.inline("☁️ Upload Mode", data="output_upload_mode")],
+            [Button.inline("📁 Output Format", data="output_format")],
             [Button.inline("🗑️ Auto Delete Original", data="output_auto_delete")],
             [Button.inline("📏 Max File Size", data="output_max_size")],
             [Button.inline("📋 Max Queue Size", data="output_queue_size")],
