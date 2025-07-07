@@ -17,7 +17,9 @@ class SettingsHandlers:
         """Handle settings callback queries"""
         user_id = event.sender_id
         data = event.data.decode()
-        
+
+        LOGS.info(f"Settings callback: {data} from user {user_id}")
+
         if str(user_id) not in OWNER.split():
             return await event.answer("❌ Access denied", alert=True)
         
@@ -193,6 +195,18 @@ class SettingsHandlers:
             await self.settings_menu.show_output_settings(event, user_id)
         else:
             await event.answer("❌ Failed to change upload mode", alert=True)
+
+    async def toggle_auto_delete(self, event, user_id: int):
+        """Toggle auto delete original files"""
+        current = self.settings_manager.get_setting("output_settings", "auto_delete_original", user_id)
+        new_value = not current
+
+        if self.settings_manager.set_setting("output_settings", "auto_delete_original", new_value, user_id):
+            status = "✅ Enabled" if new_value else "❌ Disabled"
+            await event.answer(f"Auto Delete Original {status}")
+            await self.settings_menu.show_output_settings(event, user_id)
+        else:
+            await event.answer("❌ Failed to toggle setting", alert=True)
     
     async def toggle_auto_delete(self, event, user_id: int):
         """Toggle auto delete original files"""

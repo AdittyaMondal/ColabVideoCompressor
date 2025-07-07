@@ -95,9 +95,13 @@ class SettingsManager:
                 self.settings = self.get_default_settings()
                 self.save_settings()
                 LOGS.info("✅ Default settings created")
+
+            # Also load user settings
+            self.load_user_settings()
         except Exception as e:
             LOGS.error(f"Error loading settings: {e}")
             self.settings = self.get_default_settings()
+            self.user_settings = {}
     
     def _merge_settings(self, default: Dict, loaded: Dict) -> Dict:
         """Recursively merge loaded settings with defaults"""
@@ -117,6 +121,35 @@ class SettingsManager:
             LOGS.info("✅ Settings saved to file")
         except Exception as e:
             LOGS.error(f"Error saving settings: {e}")
+
+    def save_user_settings(self):
+        """Save user settings to JSON file"""
+        try:
+            user_settings_file = "user_settings.json"
+            with open(user_settings_file, 'w') as f:
+                # Convert user_id keys to strings for JSON compatibility
+                user_settings_str = {str(k): v for k, v in self.user_settings.items()}
+                json.dump(user_settings_str, f, indent=2)
+            LOGS.info("✅ User settings saved to file")
+        except Exception as e:
+            LOGS.error(f"Error saving user settings: {e}")
+
+    def load_user_settings(self):
+        """Load user settings from JSON file"""
+        try:
+            user_settings_file = "user_settings.json"
+            if os.path.exists(user_settings_file):
+                with open(user_settings_file, 'r') as f:
+                    user_settings_str = json.load(f)
+                    # Convert string keys back to integers
+                    self.user_settings = {int(k): v for k, v in user_settings_str.items()}
+                LOGS.info("✅ User settings loaded from file")
+            else:
+                self.user_settings = {}
+                LOGS.info("✅ No user settings file found, starting fresh")
+        except Exception as e:
+            LOGS.error(f"Error loading user settings: {e}")
+            self.user_settings = {}
     
     def get_setting(self, category: str, key: str = None, user_id: int = None):
         """Get a setting value"""
@@ -150,11 +183,15 @@ class SettingsManager:
                 if category not in self.user_settings[user_id]:
                     self.user_settings[user_id][category] = {}
                 self.user_settings[user_id][category][key] = value
+                LOGS.info(f"Set user setting {category}.{key} = {value} for user {user_id}")
+                # Save user settings to JSON
+                self.save_user_settings()
             else:
                 # Set global setting
                 if category not in self.settings:
                     self.settings[category] = {}
                 self.settings[category][key] = value
+                LOGS.info(f"Set global setting {category}.{key} = {value}")
                 self.save_settings()
             return True
         except Exception as e:
@@ -212,6 +249,47 @@ class SettingsManager:
         
         available["custom"] = descriptions["custom"]
         return available
+
+    def set_active_preset(self, preset_name: str, user_id: int = None):
+        """Set the active compression preset"""
+        try:
+            if preset_name in self.settings.get("compression_presets", {}):
+                if user_id:
+                    # Set user-specific preset
+                    if user_id not in self.user_settings:
+                        self.user_settings[user_id] = {}
+                    self.user_settings[user_id]["active_preset"] = preset_name
+                    self.save_user_settings()
+                else:
+                    # Set global preset
+                    self.settings["active_preset"] = preset_name
+                    self.save_settings()
+                LOGS.info(f"Set active preset to {preset_name} for user {user_id if user_id else 'global'}")
+                return True
+            return False
+        except Exception as e:
+            LOGS.error(f"Error setting active preset: {e}")
+            return False
+
+    def get_active_compression_settings(self, user_id: int = None):
+        """Get the active compression settings based on current preset"""
+        try:
+            active_preset = self.get_setting("active_preset", user_id=user_id) or "balanced"
+
+            # Get preset settings
+            preset_settings = self.settings.get("compression_presets", {}).get(active_preset, {})
+
+            # Get custom overrides
+            custom_settings = self.get_setting("custom_compression", user_id=user_id) or {}
+
+            # Merge preset with custom overrides
+            final_settings = preset_settings.copy()
+            final_settings.update(custom_settings)
+
+            return final_settings
+        except Exception as e:
+            LOGS.error(f"Error getting active compression settings: {e}")
+            return self.settings.get("custom_compression", {})
 
 # Global settings manager instance
 settings_manager = SettingsManager()

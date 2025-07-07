@@ -17,11 +17,13 @@ from .settings import settings_manager
 def get_watermark_filter(user_id: int = None):
     """Constructs the watermark filter part of the FFmpeg command."""
     advanced_settings = settings_manager.get_setting("advanced_settings", user_id=user_id)
+    LOGS.info(f"Advanced settings for user {user_id}: {advanced_settings}")
+
     watermark_enabled = advanced_settings.get("watermark_enabled", False)
     watermark_text = advanced_settings.get("watermark_text", "Compressed by Bot")
     watermark_position = advanced_settings.get("watermark_position", "bottom-right")
 
-    LOGS.info(f"Watermark check - ENABLED: {watermark_enabled}, TEXT: '{watermark_text}', POSITION: {watermark_position}")
+    LOGS.info(f"Watermark check - USER: {user_id}, ENABLED: {watermark_enabled}, TEXT: '{watermark_text}', POSITION: {watermark_position}")
 
     if not watermark_enabled:
         LOGS.info("Watermark is disabled, skipping filter creation")
@@ -331,9 +333,16 @@ async def generate_thumbnail(video_path, user_id: int = None):
     """Generate a thumbnail image from video for Telegram upload"""
     try:
         thumbnail_settings = settings_manager.get_setting("thumbnail_settings", user_id=user_id)
-        auto_generate = thumbnail_settings.get("auto_generate_thumbnail", True)
-        custom_url = thumbnail_settings.get("custom_thumbnail_url", "")
-        timestamp_percent = thumbnail_settings.get("thumbnail_timestamp_percent", 10)
+        auto_generate = thumbnail_settings.get("auto_generate", True)
+        custom_url = thumbnail_settings.get("custom_url", "")
+        timestamp_str = thumbnail_settings.get("timestamp", "00:00:10")
+
+        # Convert timestamp string to seconds
+        try:
+            time_parts = timestamp_str.split(":")
+            timestamp_seconds = int(time_parts[0]) * 3600 + int(time_parts[1]) * 60 + int(time_parts[2])
+        except:
+            timestamp_seconds = 10  # Default to 10 seconds
 
         thumb_path = "thumb.jpg"
 
@@ -364,8 +373,8 @@ async def generate_thumbnail(video_path, user_id: int = None):
                 return None
 
             duration = float(stdout.decode().strip())
-            # Take thumbnail from specified percentage into the video
-            timestamp = duration * (timestamp_percent / 100.0)
+            # Use the specified timestamp, but ensure it's not beyond video duration
+            timestamp = min(timestamp_seconds, duration - 1)
 
             # Generate thumbnail with specific size for Telegram (320x320 max, maintaining aspect ratio)
             cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -vf \"scale=320:320:force_original_aspect_ratio=decrease\" -q:v 2 \"{thumb_path}\""
@@ -412,7 +421,10 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         
         nnn = await event.client.send_message(event.chat_id, "`Preparing to upload...`")
         
-        upload_mode = bot_state.get_upload_mode(event.sender_id)
+        # Get upload mode from settings
+        output_settings = settings_manager.get_setting("output_settings", user_id=event.sender_id)
+        upload_mode = output_settings.get("default_upload_mode", "Document")
+        LOGS.info(f"Upload mode for user {event.sender_id}: {upload_mode}")
         
         upload_name = Path(out).name
         upload_start_time = time.time()

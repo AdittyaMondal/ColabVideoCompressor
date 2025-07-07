@@ -213,14 +213,14 @@ class SettingsMenu:
         """Show thumbnail settings menu"""
         thumbnail_settings = self.settings_manager.get_setting("thumbnail_settings", user_id=user_id)
         
-        current_url = thumbnail_settings.get('custom_thumbnail_url', '')
+        current_url = thumbnail_settings.get('custom_url', '')
         url_display = current_url[:50] + "..." if len(current_url) > 50 else current_url or "None"
-        
+
         menu_text = (
             "🖼️ **Thumbnail Settings**\n\n"
-            f"**Auto Generate**: `{'✅' if thumbnail_settings.get('auto_generate_thumbnail') else '❌'}`\n"
+            f"**Auto Generate**: `{'✅' if thumbnail_settings.get('auto_generate') else '❌'}`\n"
             f"**Custom URL**: `{url_display}`\n"
-            f"**Timestamp**: `{thumbnail_settings.get('thumbnail_timestamp_percent', 10)}% into video`\n\n"
+            f"**Timestamp**: `{thumbnail_settings.get('timestamp', '00:00:10')}`\n\n"
             "Select option:"
         )
         
