@@ -55,9 +55,9 @@ class SettingsManager:
             
             # Preview & Screenshots
             "preview_settings": {
-                "enable_screenshots": False,
+                "enable_screenshots": True,  # Enable by default for better user experience
                 "screenshot_count": 5,
-                "enable_video_preview": False,
+                "enable_video_preview": True,  # Enable by default for better user experience
                 "preview_duration": 10,
                 "preview_quality": 28,
             },

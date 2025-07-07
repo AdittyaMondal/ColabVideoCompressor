@@ -2,6 +2,7 @@ import re
 import os
 import time
 import asyncio
+import aiohttp
 from datetime import datetime
 from pathlib import Path
 
@@ -185,11 +186,17 @@ async def process_compression(event, dl, start_time):
         enable_video_preview = preview_settings.get("enable_video_preview", False)
         enable_screenshots = preview_settings.get("enable_screenshots", False)
 
+        LOGS.info(f"Preview settings - Video preview: {enable_video_preview}, Screenshots: {enable_screenshots}")
+
         if enable_video_preview:
+            LOGS.info("Generating video preview...")
             preview_path = await generate_preview(out, user_id)
+            LOGS.info(f"Preview generated: {preview_path}")
 
         if enable_screenshots:
+            LOGS.info("Generating screenshots...")
             screenshots = await generate_screenshots(out, user_id)
+            LOGS.info(f"Screenshots generated: {len(screenshots) if screenshots else 0} files")
 
         await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots, thumbnail_path)
         
@@ -346,10 +353,9 @@ async def generate_thumbnail(video_path, user_id: int = None):
 
         thumb_path = "thumb.jpg"
 
-        # If custom URL is provided and auto-generate is disabled, try to download it
-        if custom_url and not auto_generate:
+        # If custom URL is provided, try to download it first
+        if custom_url:
             try:
-                import aiohttp
                 async with aiohttp.ClientSession() as session:
                     async with session.get(custom_url) as response:
                         if response.status == 200:
@@ -359,10 +365,10 @@ async def generate_thumbnail(video_path, user_id: int = None):
                             return thumb_path
             except Exception as e:
                 LOGS.error(f"Failed to download custom thumbnail: {e}")
-                # Fall back to auto-generation
+                # Fall back to auto-generation if custom URL fails
 
-        # Auto-generate thumbnail from video
-        if auto_generate:
+        # Auto-generate thumbnail from video if no custom URL or custom URL failed
+        if auto_generate or custom_url:  # Generate if auto_generate is True OR if custom URL failed
             # Get video duration first
             duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
             process = await asyncio.create_subprocess_shell(duration_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -439,8 +445,10 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
 
         # Use generated thumbnail or fallback to existing thumb.jpg
         thumb_path = thumbnail_path if thumbnail_path and os.path.exists(thumbnail_path) else ("thumb.jpg" if os.path.exists("thumb.jpg") else None)
-        
+        LOGS.info(f"Thumbnail path: {thumb_path}, exists: {os.path.exists(thumb_path) if thumb_path else False}")
+
         force_document = upload_mode == "Document"
+        LOGS.info(f"Upload settings - Mode: {upload_mode}, Force Document: {force_document}")
         
         # Get video duration for display
         video_duration = await get_video_duration(out)
@@ -455,14 +463,21 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
             event.chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=caption
         )
         
-        if preview_path:
+        if preview_path and os.path.exists(preview_path):
+            LOGS.info(f"Sending video preview: {preview_path}")
             await event.client.send_file(event.chat_id, file=preview_path, caption="**Video Preview**")
             os.remove(preview_path)
-            
-        if screenshots:
+        else:
+            LOGS.info(f"No preview to send - path: {preview_path}, exists: {os.path.exists(preview_path) if preview_path else False}")
+
+        if screenshots and len(screenshots) > 0:
+            LOGS.info(f"Sending {len(screenshots)} screenshots")
             await event.client.send_file(event.chat_id, file=screenshots, caption="**Screenshots**")
             for ss in screenshots:
-                os.remove(ss)
+                if os.path.exists(ss):
+                    os.remove(ss)
+        else:
+            LOGS.info(f"No screenshots to send - count: {len(screenshots) if screenshots else 0}")
         
         org_size, com_size = os.path.getsize(dl), os.path.getsize(out)
         reduction = 100 - (com_size / org_size * 100) if org_size > 0 else 0
@@ -475,9 +490,9 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
         try:
             tgp_client.create_api_token("Mediainfo", author_name="CompressorBot")
             if info_before_html:
-                info_before_url = tgp_client.post(title="Mediainfo (Before)", text=info_before_html)["url"]
+                info_before_url = tgp_client.post(title="Mediainfo (Before)", author="CompressorBot", text=info_before_html)["url"]
             if info_after_html:
-                info_after_url = tgp_client.post(title="Mediainfo (After)", text=info_after_html)["url"]
+                info_after_url = tgp_client.post(title="Mediainfo (After)", author="CompressorBot", text=info_after_html)["url"]
         except Exception as e:
             LOGS.error(f"Telegraph post failed: {e}")
             
