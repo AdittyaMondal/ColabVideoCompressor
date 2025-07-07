@@ -16,12 +16,18 @@ except ImportError:
 
 # --- LOGGING SETUP ---
 # Define logger here to be importable by all other modules without circular deps
+import sys
 basicConfig(
     format="[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s",
     level=INFO,
-    datefmt="%d-%b-%y %H:%M:%S"
+    datefmt="%d-%b-%y %H:%M:%S",
+    stream=sys.stdout,  # Ensure logs go to stdout
+    force=True  # Force reconfiguration
 )
 LOGS = getLogger("CompressorBot")
+
+# Ensure stdout is unbuffered for real-time logging
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
 
 # --- CORE API & BOT SETTINGS ---
 APP_ID = config("APP_ID", cast=int)

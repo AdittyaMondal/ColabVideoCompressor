@@ -17,7 +17,10 @@ from .stuff import start, up, help, usage, ihelp, beck
 from .settings_menu import settings_menu
 from .settings_handlers import settings_handlers
 
+print("🚀 Starting Enhanced Video Compressor Bot...")  # Immediate output
 LOGS.info("Starting Enhanced Video Compressor Bot...")
+import sys
+sys.stdout.flush()  # Force flush
 
 # Graceful shutdown handler
 def signal_handler(signum, frame):
@@ -33,10 +36,16 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Connect to Telegram
 try:
+    print("🔗 Connecting to Telegram...")  # Immediate output
+    sys.stdout.flush()
     bot.start(bot_token=BOT_TOKEN)
+    print("✅ Bot connected successfully")  # Immediate output
     LOGS.info("Bot connected successfully")
+    sys.stdout.flush()
 except Exception as er:
+    print(f"❌ Bot connection failed: {er}")  # Immediate output
     LOGS.error(f"Bot connection failed: {er}")
+    sys.stdout.flush()
     sys.exit(1)
 
 # --- Command Handlers ---
@@ -163,8 +172,10 @@ async def main():
         queue_task = asyncio.create_task(queue_processor())
         
         await startup()
-        
+
+        print("🎉 Bot has started successfully and is listening for commands.")  # Immediate output
         LOGS.info("Bot has started successfully and is listening for commands.")
+        sys.stdout.flush()
         
         await asyncio.gather(cleanup_task, queue_task)
         

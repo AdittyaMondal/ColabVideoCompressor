@@ -178,7 +178,16 @@ class SettingsManager:
     
     def set_active_preset(self, preset_name: str, user_id: int = None):
         """Set the active compression preset for a user"""
-        return self.set_setting("active_preset", "", preset_name, user_id)
+        if user_id:
+            # Set user-specific setting
+            if user_id not in self.user_settings:
+                self.user_settings[user_id] = {}
+            self.user_settings[user_id]["active_preset"] = preset_name
+        else:
+            # Set global setting
+            self.settings["active_preset"] = preset_name
+            self.save_settings()
+        return True
     
     def get_available_presets(self) -> Dict[str, str]:
         """Get available compression presets with descriptions"""
