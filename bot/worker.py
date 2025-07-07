@@ -71,6 +71,7 @@ async def process_compression(event, dl, start_time):
 
         filename_template = output_settings.get("filename_template", "{original_name} [{resolution} {codec}]")
         output_format = output_settings.get("output_format", "mkv")
+        LOGS.info(f"Using output format: {output_format} for user {user_id}")
         v_preset = compression_settings.get("v_preset", "medium")
         v_scale = compression_settings.get("v_scale", 1080)
         v_codec = compression_settings.get("v_codec", "libx264")
@@ -199,7 +200,7 @@ async def process_compression(event, dl, start_time):
             screenshots = await generate_screenshots(out, user_id)
             LOGS.info(f"Screenshots generated: {len(screenshots) if screenshots else 0} files")
 
-        await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots, thumbnail_path)
+        await upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path, screenshots, thumbnail_path, user_id)
         
     except Exception as e:
         LOGS.error(f"Compression process error: {e}", exc_info=True)
@@ -330,6 +331,7 @@ async def generate_screenshots(video_path, user_id: int = None):
     try:
         preview_settings = settings_manager.get_setting("preview_settings", user_id=user_id)
         screenshot_count = preview_settings.get("screenshot_count", 5)
+        LOGS.info(f"Screenshot settings for user {user_id}: count={screenshot_count}, settings={preview_settings}")
 
         # Get video duration first
         duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{video_path}\""
@@ -464,10 +466,11 @@ async def get_video_duration(video_path):
         LOGS.error(f"Error getting video duration: {e}", exc_info=True)
         return None
 
-async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None, thumbnail_path=None):
+async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None, thumbnail_path=None, user_id=None):
     try:
         # Store user info before deleting event
-        user_id = event.sender_id
+        if user_id is None:
+            user_id = event.sender_id
         chat_id = event.chat_id
         client = event.client
 
@@ -497,6 +500,11 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
 
         # Use generated thumbnail or fallback to existing thumb.jpg
         thumb_path = thumbnail_path if thumbnail_path and os.path.exists(thumbnail_path) else ("thumb.jpg" if os.path.exists("thumb.jpg") else None)
+
+        # Convert to absolute path if thumbnail exists
+        if thumb_path and os.path.exists(thumb_path):
+            thumb_path = os.path.abspath(thumb_path)
+
         LOGS.info(f"Thumbnail path: {thumb_path}, exists: {os.path.exists(thumb_path) if thumb_path else False}")
 
         force_document = upload_mode == "Document"
