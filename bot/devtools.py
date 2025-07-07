@@ -1,8 +1,13 @@
-from .stuff import *
+import sys
+import io
+import asyncio
+import traceback
+from .config import OWNER, ENABLE_EVAL, ENABLE_BASH
 
 async def eval(event):
     """Eval command handler with enhanced security"""
-    if str(event.sender_id) not in OWNER:
+    # --- FIX: Changed owner check from 'in OWNER' to 'in OWNER.split()' ---
+    if str(event.sender_id) not in OWNER.split():
         return
     
     # Security check
@@ -35,10 +40,9 @@ async def eval(event):
         with asyncio.timeout(30):  # 30 seconds timeout
             await aexec(cmd, event)
     except asyncio.TimeoutError:
-        evaluation = "❌ Execution timed out (30s limit)"
+        exc = "❌ Execution timed out (30s limit)"
     except Exception as e:
         exc = traceback.format_exc()
-        evaluation = str(e)
     
     stdout = redirected_output.getvalue()
     stderr = redirected_error.getvalue()
@@ -54,7 +58,7 @@ async def eval(event):
     else:
         evaluation = "✅ Success"
     
-    final_output = f"**📝 Code:**\n`{cmd}`\n\n**📤 Output:**\n`{evaluation}`"
+    final_output = f"**📝 Code:**\n`{cmd}`\n\n**📤 Output:**\n`{evaluation.strip()}`"
     
     if len(final_output) > 4095:
         with io.BytesIO(str.encode(final_output)) as out_file:
@@ -80,7 +84,8 @@ async def aexec(code, event):
 
 async def bash(event):
     """Bash command handler with enhanced security"""
-    if str(event.sender_id) not in OWNER:
+    # --- FIX: Changed owner check from 'in OWNER' to 'in OWNER.split()' ---
+    if str(event.sender_id) not in OWNER.split():
         return
     
     # Security check
@@ -117,6 +122,7 @@ async def bash(event):
             )
         except asyncio.TimeoutError:
             process.kill()
+            await process.wait()
             return await msg.edit("❌ Command execution timed out (60s limit)")
         
         err = stderr.decode().strip() or "No errors"

@@ -73,15 +73,31 @@ async def _(e): await custom_encoder(e)
 
 @bot.on(events.NewMessage(pattern="/settings"))
 async def _(e):
-    """Handle settings command with error handling"""
+    """Handle settings command with detailed logging and error handling"""
     try:
-        if str(e.sender_id) not in OWNER.split():
-            return await e.reply("❌ You don't have permission to access settings.")
+        LOGS.info(f"Settings command received from user {e.sender_id}")
+        
+        # --- FIX: Added explicit check for OWNER variable ---
+        if not OWNER:
+            LOGS.warning("OWNER variable is not set. Settings command is disabled.")
+            return await e.reply("❌ **Configuration Error:**\nBot owner not configured. The `/settings` command is disabled.")
 
+        owner_list = OWNER.split()
+        if str(e.sender_id) not in owner_list:
+            LOGS.info(f"User {e.sender_id} is not an owner. Owner list: {owner_list}")
+            return await e.reply("❌ You don't have permission to access settings.\n\nPlease ensure your User ID is listed in the `OWNER` variable in the bot's configuration.")
+
+        LOGS.info("User is owner, proceeding to show settings menu")
+        if not hasattr(settings_menu, 'settings_manager') or settings_menu.settings_manager is None:
+            LOGS.error("Settings manager not initialized")
+            return await e.reply("❌ Settings system not initialized. Please restart the bot and try again.")
+
+        LOGS.info("Settings manager is initialized, displaying main menu")
         await settings_menu.show_main_menu(e, e.sender_id)
+        LOGS.info("Settings menu displayed successfully")
     except Exception as er:
         LOGS.error(f"Settings command error: {er}", exc_info=True)
-        await e.reply("❌ Error accessing settings. Please check bot logs.")
+        await e.reply(f"❌ Error accessing settings: {str(er)}\n\nPlease check bot logs or contact the developer.")
 
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):
@@ -103,14 +119,13 @@ async def _(e):
     """Debug command to check user permissions and settings"""
     try:
         user_id = e.sender_id
-        owner_list = OWNER.split()
-        is_owner = str(user_id) in owner_list
+        is_owner = str(user_id) in OWNER.split()
 
         debug_info = (
             f"🔍 **Debug Information**\n\n"
-            f"**User ID**: `{user_id}`\n"
-            f"**Is Owner**: `{is_owner}`\n"
-            f"**Owner List**: `{owner_list}`\n"
+            f"**Your User ID**: `{user_id}`\n"
+            f"**Are you an Owner?**: `{'✅ Yes' if is_owner else '❌ No'}`\n"
+            f"**Configured Owner List**: `{OWNER.split()}`\n"
             f"**Settings Manager**: `{'✅ Initialized' if hasattr(settings_menu, 'settings_manager') and settings_menu.settings_manager else '❌ Not initialized'}`"
         )
 
