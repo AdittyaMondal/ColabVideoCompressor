@@ -20,8 +20,7 @@ async def up(event):
 
 async def usage(event):
     """System usage command handler"""
-    # --- FIX: Changed owner check from 'in OWNER' to 'in OWNER.split()' ---
-    if str(event.sender_id) not in OWNER.split():
+    if not OWNER or str(event.sender_id) not in OWNER.split():
         return
     
     total, used, free = shutil.disk_usage(".")

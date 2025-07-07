@@ -77,16 +77,22 @@ async def _(e):
     try:
         LOGS.info(f"Settings command received from user {e.sender_id}")
         
+        # --- FIX: Added explicit check for OWNER variable ---
         if not OWNER:
             LOGS.warning("OWNER variable is not set. Settings command is disabled.")
             return await e.reply("❌ **Configuration Error:**\nBot owner not configured. The `/settings` command is disabled.")
 
         owner_list = OWNER.split()
         if str(e.sender_id) not in owner_list:
-            LOGS.warning(f"User {e.sender_id} is not an owner. Allowed: {owner_list}")
+            LOGS.info(f"User {e.sender_id} is not an owner. Owner list: {owner_list}")
             return await e.reply("❌ You don't have permission to access settings.\n\nPlease ensure your User ID is listed in the `OWNER` variable in the bot's configuration.")
 
         LOGS.info("User is owner, proceeding to show settings menu")
+        if not hasattr(settings_menu, 'settings_manager') or settings_menu.settings_manager is None:
+            LOGS.error("Settings manager not initialized")
+            return await e.reply("❌ Settings system not initialized. Please restart the bot and try again.")
+
+        LOGS.info("Settings manager is initialized, displaying main menu")
         await settings_menu.show_main_menu(e, e.sender_id)
         LOGS.info("Settings menu displayed successfully")
     except Exception as er:
@@ -95,7 +101,7 @@ async def _(e):
 
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):
-    if str(e.sender_id) not in OWNER.split(): return
+    if not OWNER or str(e.sender_id) not in OWNER.split(): return
     status_msg = (
         f"🤖 **Bot Status**\n\n"
         f"🔧 **Working**: {'Yes' if bot_state.is_working() else 'No'}\n"
@@ -113,13 +119,13 @@ async def _(e):
     """Debug command to check user permissions and settings"""
     try:
         user_id = e.sender_id
-        is_owner = str(user_id) in OWNER.split()
+        is_owner = OWNER and str(user_id) in OWNER.split()
 
         debug_info = (
             f"🔍 **Debug Information**\n\n"
             f"**Your User ID**: `{user_id}`\n"
-            f"**Are You an Owner?**: `{'✅ Yes' if is_owner else '❌ No'}`\n"
-            f"**Configured Owner List**: `{OWNER.split()}`\n"
+            f"**Are you an Owner?**: `{'✅ Yes' if is_owner else '❌ No'}`\n"
+            f"**Configured Owner List**: `{OWNER.split() if OWNER else 'Not configured'}`\n"
             f"**Settings Manager**: `{'✅ Initialized' if hasattr(settings_menu, 'settings_manager') and settings_menu.settings_manager else '❌ Not initialized'}`"
         )
 
@@ -164,7 +170,7 @@ async def _(e):
 
 # --- Text Input Handler for Settings ---
 
-@bot.on(events.NewMessage(incoming=True, func=lambda e: not e.media and not e.text.startswith('/') and str(e.sender_id) in OWNER.split()))
+@bot.on(events.NewMessage(incoming=True, func=lambda e: not e.media and not e.text.startswith('/') and OWNER and str(e.sender_id) in OWNER.split()))
 async def _(e):
     """Handle text input for settings configuration"""
     if await settings_handlers.handle_text_input(e, e.sender_id):
@@ -172,7 +178,7 @@ async def _(e):
 
 # --- Media Handler ---
 
-@bot.on(events.NewMessage(incoming=True, func=lambda e: e.media and str(e.sender_id) in OWNER.split()))
+@bot.on(events.NewMessage(incoming=True, func=lambda e: e.media and OWNER and str(e.sender_id) in OWNER.split()))
 async def _(e): await encod(e)
 
 # --- Queue Processor ---
