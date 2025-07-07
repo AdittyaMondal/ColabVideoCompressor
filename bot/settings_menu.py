@@ -11,34 +11,44 @@ class SettingsMenu:
     
     async def show_main_menu(self, event, user_id: int):
         """Show the main settings menu"""
-        if str(user_id) not in OWNER.split():
-            return await event.reply("❌ You don't have permission to access settings.")
-        
-        active_preset = self.settings_manager.get_setting("active_preset", user_id=user_id) or "balanced"
-        
-        menu_text = (
-            "⚙️ **Bot Settings Menu**\n\n"
-            f"🎯 **Current Preset**: `{active_preset.replace('_', ' ').title()}`\n"
-            f"🖥️ **Hardware**: `{GPU_TYPE.upper()}`\n\n"
-            "Select a category to configure:"
-        )
-        
-        buttons = [
-            [Button.inline("🎬 Compression Presets", data="settings_presets")],
-            [Button.inline("🔧 Custom Compression", data="settings_custom")],
-            [Button.inline("📤 Output Settings", data="settings_output")],
-            [Button.inline("📸 Preview & Screenshots", data="settings_preview")],
-            [Button.inline("⚡ Advanced Config", data="settings_advanced")],
-            [Button.inline("🖼️ Thumbnail Settings", data="settings_thumbnail")],
-            [Button.inline("📊 Current Settings", data="settings_current")],
-            [Button.inline("🔄 Reset to Defaults", data="settings_reset")],
-            [Button.inline("❌ Close", data="settings_close")]
-        ]
-        
-        if hasattr(event, 'edit'):
-            await event.edit(menu_text, buttons=buttons)
-        else:
-            await event.reply(menu_text, buttons=buttons)
+        try:
+            if str(user_id) not in OWNER.split():
+                return await event.reply("❌ You don't have permission to access settings.")
+
+            # Check if settings manager is properly initialized
+            if not hasattr(self, 'settings_manager') or self.settings_manager is None:
+                LOGS.error("Settings manager not initialized")
+                return await event.reply("❌ Settings system not initialized. Please restart the bot.")
+
+            active_preset = self.settings_manager.get_setting("active_preset", user_id=user_id) or "balanced"
+
+            menu_text = (
+                "⚙️ **Bot Settings Menu**\n\n"
+                f"🎯 **Current Preset**: `{active_preset.replace('_', ' ').title()}`\n"
+                f"🖥️ **Hardware**: `{GPU_TYPE.upper()}`\n\n"
+                "Select a category to configure:"
+            )
+
+            buttons = [
+                [Button.inline("🎬 Compression Presets", data="settings_presets")],
+                [Button.inline("🔧 Custom Compression", data="settings_custom")],
+                [Button.inline("📤 Output Settings", data="settings_output")],
+                [Button.inline("📸 Preview & Screenshots", data="settings_preview")],
+                [Button.inline("⚡ Advanced Config", data="settings_advanced")],
+                [Button.inline("🖼️ Thumbnail Settings", data="settings_thumbnail")],
+                [Button.inline("📊 Current Settings", data="settings_current")],
+                [Button.inline("🔄 Reset to Defaults", data="settings_reset")],
+                [Button.inline("❌ Close", data="settings_close")]
+            ]
+
+            if hasattr(event, 'edit'):
+                await event.edit(menu_text, buttons=buttons)
+            else:
+                await event.reply(menu_text, buttons=buttons)
+
+        except Exception as e:
+            LOGS.error(f"Error showing main settings menu: {e}", exc_info=True)
+            await event.reply("❌ Error loading settings menu. Please check bot logs.")
     
     async def show_compression_presets(self, event, user_id: int):
         """Show compression presets menu"""

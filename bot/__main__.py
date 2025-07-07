@@ -72,7 +72,16 @@ async def _(e): await toggle_watermark(e)
 async def _(e): await custom_encoder(e)
 
 @bot.on(events.NewMessage(pattern="/settings"))
-async def _(e): await settings_menu.show_main_menu(e, e.sender_id)
+async def _(e):
+    """Handle settings command with error handling"""
+    try:
+        if str(e.sender_id) not in OWNER.split():
+            return await e.reply("❌ You don't have permission to access settings.")
+
+        await settings_menu.show_main_menu(e, e.sender_id)
+    except Exception as er:
+        LOGS.error(f"Settings command error: {er}", exc_info=True)
+        await e.reply("❌ Error accessing settings. Please check bot logs.")
 
 @bot.on(events.NewMessage(pattern="/status"))
 async def _(e):
@@ -88,6 +97,32 @@ async def _(e):
 
 @bot.on(events.NewMessage(pattern="/usage"))
 async def _(e): await usage(e)
+
+@bot.on(events.NewMessage(pattern="/debug"))
+async def _(e):
+    """Debug command to check user permissions and settings"""
+    try:
+        user_id = e.sender_id
+        owner_list = OWNER.split()
+        is_owner = str(user_id) in owner_list
+
+        debug_info = (
+            f"🔍 **Debug Information**\n\n"
+            f"**User ID**: `{user_id}`\n"
+            f"**Is Owner**: `{is_owner}`\n"
+            f"**Owner List**: `{owner_list}`\n"
+            f"**Settings Manager**: `{'✅ Initialized' if hasattr(settings_menu, 'settings_manager') and settings_menu.settings_manager else '❌ Not initialized'}`"
+        )
+
+        await e.reply(debug_info)
+    except Exception as er:
+        LOGS.error(f"Debug command error: {er}", exc_info=True)
+        await e.reply(f"❌ Debug error: {er}")
+
+@bot.on(events.NewMessage(pattern="/test"))
+async def _(e):
+    """Simple test command to verify bot responsiveness"""
+    await e.reply("✅ Bot is responding! Test successful.")
 
 # --- Callback Handlers ---
 
