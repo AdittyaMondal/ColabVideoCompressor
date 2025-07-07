@@ -77,22 +77,16 @@ async def _(e):
     try:
         LOGS.info(f"Settings command received from user {e.sender_id}")
         
-        # --- FIX: Added explicit check for OWNER variable ---
         if not OWNER:
             LOGS.warning("OWNER variable is not set. Settings command is disabled.")
             return await e.reply("❌ **Configuration Error:**\nBot owner not configured. The `/settings` command is disabled.")
 
         owner_list = OWNER.split()
         if str(e.sender_id) not in owner_list:
-            LOGS.info(f"User {e.sender_id} is not an owner. Owner list: {owner_list}")
+            LOGS.warning(f"User {e.sender_id} is not an owner. Allowed: {owner_list}")
             return await e.reply("❌ You don't have permission to access settings.\n\nPlease ensure your User ID is listed in the `OWNER` variable in the bot's configuration.")
 
         LOGS.info("User is owner, proceeding to show settings menu")
-        if not hasattr(settings_menu, 'settings_manager') or settings_menu.settings_manager is None:
-            LOGS.error("Settings manager not initialized")
-            return await e.reply("❌ Settings system not initialized. Please restart the bot and try again.")
-
-        LOGS.info("Settings manager is initialized, displaying main menu")
         await settings_menu.show_main_menu(e, e.sender_id)
         LOGS.info("Settings menu displayed successfully")
     except Exception as er:
@@ -124,7 +118,7 @@ async def _(e):
         debug_info = (
             f"🔍 **Debug Information**\n\n"
             f"**Your User ID**: `{user_id}`\n"
-            f"**Are you an Owner?**: `{'✅ Yes' if is_owner else '❌ No'}`\n"
+            f"**Are You an Owner?**: `{'✅ Yes' if is_owner else '❌ No'}`\n"
             f"**Configured Owner List**: `{OWNER.split()}`\n"
             f"**Settings Manager**: `{'✅ Initialized' if hasattr(settings_menu, 'settings_manager') and settings_menu.settings_manager else '❌ Not initialized'}`"
         )

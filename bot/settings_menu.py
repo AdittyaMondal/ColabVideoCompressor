@@ -10,10 +10,11 @@ class SettingsMenu:
         self.settings_manager = settings_manager
     
     async def show_main_menu(self, event, user_id: int):
-        """Show the main settings menu"""
+        """Show the main settings menu. Assumes caller has already verified owner permissions."""
         try:
-            if str(user_id) not in OWNER.split():
-                return await event.reply("❌ You don't have permission to access settings.")
+            # --- FIX: REMOVED REDUNDANT OWNER CHECK ---
+            # The command handler in __main__.py already performs this check.
+            # Removing it here simplifies the code and fixes the silent failure.
 
             # Check if settings manager is properly initialized
             if not hasattr(self, 'settings_manager') or self.settings_manager is None:
@@ -41,6 +42,7 @@ class SettingsMenu:
                 [Button.inline("❌ Close", data="settings_close")]
             ]
 
+            # This logic correctly handles both new commands (reply) and callbacks (edit)
             if hasattr(event, 'edit'):
                 await event.edit(menu_text, buttons=buttons)
             else:
