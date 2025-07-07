@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from telethon import Button
+from telethon.tl.types import DocumentAttributeVideo
 from html_telegraph_poster import TelegraphPoster
 
 from .FastTelethon import download_file, upload_file
@@ -430,7 +431,8 @@ async def generate_thumbnail(video_path, user_id: int = None):
             timestamp = min(timestamp_seconds, duration - 1)
 
             # Generate thumbnail with specific size for Telegram (320x320 max, maintaining aspect ratio)
-            cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -vf \"scale=320:320:force_original_aspect_ratio=decrease\" -q:v 2 \"{thumb_path}\""
+            # Use pad filter to ensure proper thumbnail dimensions for Telegram
+            cmd = f"ffmpeg -y -ss {timestamp} -i \"{video_path}\" -vframes 1 -vf \"scale=320:320:force_original_aspect_ratio=decrease,pad=320:320:(ow-iw)/2:(oh-ih)/2:black\" -q:v 2 \"{thumb_path}\""
             process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
             _, stderr = await process.communicate()
 
@@ -463,6 +465,41 @@ async def get_video_duration(video_path):
             return None
     except Exception as e:
         LOGS.error(f"Error getting video duration: {e}", exc_info=True)
+        return None
+
+
+async def get_video_metadata(video_path):
+    """Get comprehensive video metadata (duration, width, height)"""
+    try:
+        # Get duration, width, and height in one command
+        metadata_cmd = (
+            f"ffprobe -v error -select_streams v:0 "
+            f"-show_entries stream=width,height:format=duration "
+            f"-of csv=p=0:s=, \"{video_path}\""
+        )
+        process = await asyncio.create_subprocess_shell(
+            metadata_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            output = stdout.decode().strip()
+            # Output format: width,height,duration
+            parts = output.split(',')
+            if len(parts) >= 3:
+                width = int(parts[0]) if parts[0] else 0
+                height = int(parts[1]) if parts[1] else 0
+                duration = float(parts[2]) if parts[2] else 0.0
+                return {
+                    'width': width,
+                    'height': height,
+                    'duration': duration
+                }
+
+        LOGS.error(f"Failed to get video metadata: {stderr.decode(errors='ignore')}")
+        return None
+    except Exception as e:
+        LOGS.error(f"Error getting video metadata: {e}", exc_info=True)
         return None
 
 async def upload_compressed_file(event, dl, out, dtime, compress_start_time, preview_path=None, screenshots=None, thumbnail_path=None, user_id=None):
@@ -508,18 +545,42 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
 
         force_document = upload_mode == "Document"
         LOGS.info(f"Upload settings - Mode: {upload_mode}, Force Document: {force_document}")
-        
-        # Get video duration for display
-        video_duration = await get_video_duration(out)
+
+        # Get comprehensive video metadata
+        video_metadata = await get_video_metadata(out)
+        video_duration = video_metadata['duration'] if video_metadata else None
+        video_width = video_metadata['width'] if video_metadata else 0
+        video_height = video_metadata['height'] if video_metadata else 0
+
         duration_str = f"{int(video_duration//60)}:{int(video_duration%60):02d}" if video_duration else "Unknown"
+        LOGS.info(f"Video metadata - Duration: {video_duration}s, Resolution: {video_width}x{video_height}")
 
         # Create enhanced caption with duration
         caption = f"`{upload_name}`"
         if video_duration:
             caption += f"\n🎬 Duration: {duration_str}"
+        if video_width and video_height:
+            caption += f"\n📐 Resolution: {video_width}x{video_height}"
+
+        # Prepare video attributes for proper video file upload
+        attributes = None
+        if not force_document and video_metadata and video_duration and video_width and video_height:
+            # Use DocumentAttributeVideo for proper video file with thumbnail and duration display
+            attributes = [DocumentAttributeVideo(
+                duration=int(video_duration),
+                w=video_width,
+                h=video_height,
+                supports_streaming=True
+            )]
+            LOGS.info(f"Using DocumentAttributeVideo: duration={int(video_duration)}, size={video_width}x{video_height}")
 
         final_message = await client.send_file(
-            chat_id, file=uploaded_file, force_document=force_document, thumb=thumb_path, caption=caption
+            chat_id,
+            file=uploaded_file,
+            force_document=force_document,
+            thumb=thumb_path,
+            caption=caption,
+            attributes=attributes
         )
         
         if preview_path and os.path.exists(preview_path):
@@ -556,11 +617,14 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
             LOGS.error(f"Telegraph post failed: {e}")
             
         gpu_info = f"\n🚀 **Engine**: {GPU_TYPE.upper()}"
+        # Enhanced stats with video metadata
+        resolution_info = f"{video_width}x{video_height}" if video_width and video_height else "Unknown"
         stats_msg = (
             f"✅ **COMPRESSION COMPLETE**\n\n"
             f"📁 **Original Size**: {hbs(org_size)}\n"
             f"📦 **Compressed Size**: {hbs(com_size)} ({reduction:.2f}% reduction)\n"
-            f"🎬 **Duration**: {duration_str}\n\n"
+            f"🎬 **Duration**: {duration_str}\n"
+            f"📐 **Resolution**: {resolution_info}\n\n"
             f"⏱️ **Time Taken:**\n"
             f"  - **Download**: {dtime}\n"
             f"  - **Compress**: {comp_time}\n"
@@ -570,7 +634,15 @@ async def upload_compressed_file(event, dl, out, dtime, compress_start_time, pre
             stats_msg += f"📋 **MediaInfo**: [Before]({info_before_url}) | [After]({info_after_url})"
         
         await final_message.reply(stats_msg, link_preview=False)
-        
+
+        # Clean up thumbnail file
+        if thumb_path and os.path.exists(thumb_path) and validate_file_path(thumb_path):
+            try:
+                os.remove(thumb_path)
+                LOGS.info(f"Cleaned up thumbnail: {thumb_path}")
+            except OSError as e:
+                LOGS.error(f"Failed to delete thumbnail {thumb_path}: {e}")
+
     except Exception as e:
         LOGS.error(f"Upload error: {e}", exc_info=True)
         await event.client.send_message(event.chat_id, f"❌ **UPLOAD ERROR**: `{str(e)}`")
