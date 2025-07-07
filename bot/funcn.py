@@ -211,15 +211,21 @@ async def stats(e):
 async def fast_download(e, download_url, filename=None):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     start_time = time.time()
-    
+
+    # Get dynamic file size limit from user settings
+    from .settings import settings_manager
+    user_id = e.sender_id if hasattr(e, 'sender_id') else None
+    output_settings = settings_manager.get_setting("output_settings", user_id=user_id)
+    max_file_size = output_settings.get("max_file_size", MAX_FILE_SIZE)
+
     async with aiohttp.ClientSession(headers=headers) as session:
         async with session.get(download_url, timeout=None, allow_redirects=True) as response:
             if response.status != 200:
                 raise Exception(f"Download failed: Status {response.status}")
 
             total_size = int(response.headers.get("content-length", 0))
-            if total_size and total_size > MAX_FILE_SIZE * 1024 * 1024:
-                raise ValueError(f"File too large: {hbs(total_size)} > {MAX_FILE_SIZE}MB")
+            if total_size and total_size > max_file_size * 1024 * 1024:
+                raise ValueError(f"File too large: {hbs(total_size)} > {max_file_size}MB")
 
             if not filename:
                 content_disposition = response.headers.get('Content-Disposition')
