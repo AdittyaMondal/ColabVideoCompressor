@@ -199,34 +199,7 @@ class SettingsManager:
             LOGS.error(f"Error setting {category}.{key}: {e}")
             return False
     
-    def get_active_compression_settings(self, user_id: int = None) -> Dict[str, Any]:
-        """Get the currently active compression settings for a user"""
-        active_preset = self.get_setting("active_preset", user_id=user_id) or "balanced"
-        
-        # Check if it's a preset or custom
-        if active_preset == "custom":
-            return self.get_setting("custom_compression", user_id=user_id)
-        else:
-            presets = self.get_setting("compression_presets")
-            if active_preset in presets:
-                return presets[active_preset]
-            else:
-                # Fallback to balanced preset
-                return presets.get("balanced", self.get_setting("custom_compression"))
-    
-    def set_active_preset(self, preset_name: str, user_id: int = None):
-        """Set the active compression preset for a user"""
-        if user_id:
-            # Set user-specific setting
-            if user_id not in self.user_settings:
-                self.user_settings[user_id] = {}
-            self.user_settings[user_id]["active_preset"] = preset_name
-        else:
-            # Set global setting
-            self.settings["active_preset"] = preset_name
-            self.save_settings()
-        return True
-    
+
     def get_available_presets(self) -> Dict[str, str]:
         """Get available compression presets with descriptions"""
         presets = self.get_setting("compression_presets")
@@ -254,7 +227,9 @@ class SettingsManager:
     def set_active_preset(self, preset_name: str, user_id: int = None):
         """Set the active compression preset"""
         try:
-            if preset_name in self.settings.get("compression_presets", {}):
+            # Allow 'custom' as a valid preset, or any preset in compression_presets
+            valid_presets = list(self.settings.get("compression_presets", {}).keys()) + ["custom"]
+            if preset_name in valid_presets:
                 if user_id:
                     # Set user-specific preset
                     if user_id not in self.user_settings:
