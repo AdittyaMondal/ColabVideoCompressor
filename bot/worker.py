@@ -198,6 +198,8 @@ async def process_compression(event, dl, start_time, user_id: int):
         last_update = 0
         current_time_us = 0
         total_duration_us = int(video_duration * 1000000) if video_duration else 0
+        # Get original file size for stats
+        original_size = os.path.getsize(dl) if os.path.exists(dl) else 0
         
         async def update_progress():
             nonlocal last_update, current_time_us
@@ -215,15 +217,27 @@ async def process_compression(event, dl, start_time, user_id: int):
                 remaining_us = total_duration_us - current_time_us
                 eta_seconds = remaining_us / 1000000 / speed if speed > 0 else 0
                 
+                # Get current compressed file size
+                current_size = os.path.getsize(out) if os.path.exists(out) else 0
+                reduction = ((original_size - current_size) / original_size * 100) if original_size > 0 else 0
+                
                 # Create visual progress bar
                 filled = int(percentage / 5)
                 bar = "█" * filled + "░" * (20 - filled)
                 
                 eta_str = ts(int(eta_seconds * 1000)) if eta_seconds > 0 else "calculating..."
                 
+                # Size display
+                original_str = hbs(original_size)
+                current_str = hbs(current_size)
+                
                 progress_text = (
                     f"🔄 **ENCODING IN PROGRESS**\n\n"
                     f"`[{bar}] {percentage:.1f}%`\n\n"
+                    f"📊 **Compression Stats:**\n"
+                    f"📁 Original: `{original_str}`\n"
+                    f"💾 Compressed: `{current_str}`\n"
+                    f"📉 Reduction: `{reduction:.1f}%`\n\n"
                     f"⏱️ Elapsed: `{ts(int(elapsed * 1000))}`\n"
                     f"⏳ ETA: `{eta_str}`\n"
                     f"🚀 Speed: `{speed:.2f}x`\n"
