@@ -146,7 +146,9 @@ async def process_compression(event, dl, start_time, user_id: int):
         filters = []
         if v_scale != -1:
             if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
-                filters.append(f'scale_cuda=-2:{v_scale}')
+                # Scale on GPU, then download to CPU in nv12 format for encoder compatibility
+                # This avoids format negotiation issues between scale_cuda and encoder
+                filters.append(f'scale_cuda=-2:{v_scale},hwdownload,format=nv12')
             else:
                 filters.append(f'scale=-2:{v_scale}:force_original_aspect_ratio=decrease')
 
@@ -154,14 +156,9 @@ async def process_compression(event, dl, start_time, user_id: int):
             watermark_filter = get_watermark_filter(user_id)
             if watermark_filter:  # Only add if watermark filter is valid
                 if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
-                    # For hardware acceleration with watermark:
-                    # 1. Download from GPU to system memory
-                    # 2. Convert to nv12 format for software processing
-                    # 3. Apply watermark (software filter)
-                    # 4. Upload back to GPU
-                    # Note: When using hwupload after software filters, we need to NOT use hwupload_cuda
-                    # because the encoder can accept system memory input. This avoids format conversion issues.
-                    filters.append(f'hwdownload,format=nv12,{watermark_filter}')
+                    # When using GPU scaling with watermark, frames are already in CPU memory (nv12)
+                    # Just apply the watermark directly
+                    filters.append(watermark_filter)
                 else:
                     # For software encoding, apply watermark directly
                     filters.append(watermark_filter)
