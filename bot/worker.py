@@ -136,8 +136,9 @@ async def process_compression(event, dl, start_time, user_id: int):
                 v_profile = 'main'  # Default to main for x265
 
         # Input options (before -i)
-        if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
-            cmd_parts.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+        # NOTE: We intentionally do NOT use -hwaccel cuda for decoding
+        # as it fails on many video formats (CUDA_ERROR_INVALID_VALUE).
+        # Software decoding + NVENC encoding is the most compatible approach.
 
         # Input file
         cmd_parts.extend(['-i', f'"{dl}"'])
@@ -145,23 +146,13 @@ async def process_compression(event, dl, start_time, user_id: int):
         # Output options (after -i, before output file)
         filters = []
         if v_scale != -1:
-            if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
-                # Scale on GPU, then download to CPU in nv12 format for encoder compatibility
-                # This avoids format negotiation issues between scale_cuda and encoder
-                filters.append(f'scale_cuda=-2:{v_scale},hwdownload,format=nv12')
-            else:
-                filters.append(f'scale=-2:{v_scale}:force_original_aspect_ratio=decrease')
+            # Always use software scaling for maximum compatibility
+            filters.append(f'scale=-2:{v_scale}:force_original_aspect_ratio=decrease')
 
         if watermark_enabled:
             watermark_filter = get_watermark_filter(user_id)
             if watermark_filter:  # Only add if watermark filter is valid
-                if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
-                    # When using GPU scaling with watermark, frames are already in CPU memory (nv12)
-                    # Just apply the watermark directly
-                    filters.append(watermark_filter)
-                else:
-                    # For software encoding, apply watermark directly
-                    filters.append(watermark_filter)
+                filters.append(watermark_filter)
 
         if filters:
             cmd_parts.extend(['-vf', f'"{",".join(filters)}"'])
