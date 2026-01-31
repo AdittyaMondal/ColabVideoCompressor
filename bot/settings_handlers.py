@@ -64,6 +64,14 @@ class SettingsHandlers:
                 await self.handle_audio_setting(event, user_id, data)
             elif data.startswith("set_watermark_pos_"):
                 await self.handle_watermark_position(event, user_id, data)
+            elif data.startswith("set_preset_"):
+                await self.handle_encoder_preset_setting(event, user_id, data)
+            elif data == "settings_export":
+                await self.handle_export_settings(event, user_id)
+            elif data == "settings_import":
+                await self.handle_import_settings(event, user_id)
+            elif data == "custom_save_preset":
+                await self.handle_save_custom_preset(event, user_id)
             elif data == "confirm_reset":
                 await self.handle_confirm_reset(event, user_id)
             else:
@@ -120,6 +128,41 @@ class SettingsHandlers:
                 [Button.inline("H.264 NVENC - Hardware accelerated", data="set_codec_h264_nvenc")],
                 [Button.inline("H.265 NVENC - Hardware accelerated", data="set_codec_hevc_nvenc")]
             ])
+        
+        buttons.append([Button.inline("🔙 Back", data="settings_custom")])
+        
+        await event.edit(menu_text, buttons=buttons)
+    
+    async def show_preset_selection(self, event, user_id: int):
+        """Show encoder preset selection (speed vs quality tradeoff)"""
+        menu_text = "⚡ **Select Encoder Preset**\n\nFaster = Larger file, Lower quality\nSlower = Smaller file, Higher quality"
+        
+        from .config import GPU_TYPE
+        
+        if GPU_TYPE == "nvidia":
+            # NVENC presets
+            buttons = [
+                [Button.inline("🚀 P1 - Fastest", data="set_preset_p1")],
+                [Button.inline("⚡ P2 - Very Fast", data="set_preset_p2")],
+                [Button.inline("🏃 P3 - Fast", data="set_preset_p3")],
+                [Button.inline("⚖️ P4 - Medium", data="set_preset_p4")],
+                [Button.inline("🎯 P5 - Slow", data="set_preset_p5")],
+                [Button.inline("💎 P6 - Slower", data="set_preset_p6")],
+                [Button.inline("🏆 P7 - Slowest/Best", data="set_preset_p7")],
+            ]
+        else:
+            # CPU presets (x264/x265)
+            buttons = [
+                [Button.inline("🚀 Ultrafast", data="set_preset_ultrafast")],
+                [Button.inline("⚡ Superfast", data="set_preset_superfast")],
+                [Button.inline("🏃 Veryfast", data="set_preset_veryfast")],
+                [Button.inline("⏩ Faster", data="set_preset_faster")],
+                [Button.inline("▶️ Fast", data="set_preset_fast")],
+                [Button.inline("⚖️ Medium", data="set_preset_medium")],
+                [Button.inline("🎯 Slow", data="set_preset_slow")],
+                [Button.inline("💎 Slower", data="set_preset_slower")],
+                [Button.inline("🏆 Veryslow", data="set_preset_veryslow")],
+            ]
         
         buttons.append([Button.inline("🔙 Back", data="settings_custom")])
         
@@ -322,6 +365,16 @@ class SettingsHandlers:
                 value = int(text)
                 if 1 <= value <= 30:
                     return self.settings_manager.set_setting("advanced_settings", "progress_update_interval", value, user_id)
+            elif setting_key == "import_settings":
+                import json
+                try:
+                    imported = json.loads(text)
+                    if isinstance(imported, dict):
+                        self.settings_manager.user_settings[user_id] = imported
+                        self.settings_manager.save_user_settings()
+                        return True
+                except json.JSONDecodeError:
+                    pass
             # Add more text input processors as needed
             
         except ValueError:
@@ -521,6 +574,71 @@ class SettingsHandlers:
         except Exception as e:
             LOGS.error(f"Error resetting settings: {e}")
             await event.answer("❌ Failed to reset settings", alert=True)
+
+    async def handle_encoder_preset_setting(self, event, user_id: int, data: str):
+        """Handle encoder preset setting (speed vs quality)"""
+        preset = data.replace("set_preset_", "")
+        if self.settings_manager.set_setting("custom_compression", "v_preset", preset, user_id):
+            await event.answer(f"✅ Encoder preset set to {preset}")
+            await self.settings_menu.show_custom_compression(event, user_id)
+        else:
+            await event.answer("❌ Failed to set preset", alert=True)
+
+    async def handle_export_settings(self, event, user_id: int):
+        """Export user settings as JSON"""
+        import json
+        try:
+            user_settings = self.settings_manager.user_settings.get(user_id, {})
+            if not user_settings:
+                return await event.answer("❌ No custom settings to export", alert=True)
+            
+            settings_json = json.dumps(user_settings, indent=2)
+            
+            # Send as a message (Telegram has a limit, so we truncate if needed)
+            if len(settings_json) > 4000:
+                settings_json = settings_json[:4000] + "\n... (truncated)"
+            
+            await event.edit(
+                f"📋 **Your Settings Export**\n\n```json\n{settings_json}\n```\n\n"
+                "Copy and save this JSON to import later.",
+                buttons=[[Button.inline("🔙 Back", data="settings_current")]]
+            )
+        except Exception as e:
+            LOGS.error(f"Error exporting settings: {e}")
+            await event.answer("❌ Failed to export settings", alert=True)
+
+    async def handle_import_settings(self, event, user_id: int):
+        """Request settings import from user"""
+        self.waiting_for_input[user_id] = "import_settings"
+        
+        await event.edit(
+            "📥 **Import Settings**\n\n"
+            "Paste your previously exported JSON settings below.\n\n"
+            "⚠️ This will overwrite your current settings!",
+            buttons=[[Button.inline("❌ Cancel", data="settings_current")]]
+        )
+
+    async def handle_save_custom_preset(self, event, user_id: int):
+        """Save current custom settings as a reminder"""
+        custom_settings = self.settings_manager.get_setting("custom_compression", user_id=user_id)
+        
+        settings_summary = (
+            f"💾 **Custom Settings Saved!**\n\n"
+            f"Your current custom compression settings:\n"
+            f"• Codec: `{custom_settings.get('v_codec', 'N/A')}`\n"
+            f"• Preset: `{custom_settings.get('v_preset', 'N/A')}`\n"
+            f"• Quality: `{custom_settings.get('v_qp', 'N/A')} CRF`\n"
+            f"• Resolution: `{custom_settings.get('v_scale', 'N/A')}p`\n"
+            f"• FPS: `{custom_settings.get('v_fps', 'N/A')}`\n"
+            f"• Audio: `{custom_settings.get('a_bitrate', 'N/A')}`\n\n"
+            f"Select 'Custom' preset to use these settings."
+        )
+        
+        await event.edit(
+            settings_summary,
+            buttons=[[Button.inline("🔙 Back", data="settings_custom")]]
+        )
+        await event.answer("✅ Custom settings are saved!")
 
 # Global settings handlers instance
 settings_handlers = SettingsHandlers()

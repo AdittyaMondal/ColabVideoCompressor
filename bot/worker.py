@@ -188,7 +188,84 @@ async def process_compression(event, dl, start_time, user_id: int):
         
         cmd = ' '.join(cmd_parts)
         LOGS.info(f"Executing FFmpeg command: {cmd}")
-        process = await asyncio.create_subprocess_shell(cmd, stderr=asyncio.subprocess.PIPE)
+        
+        # Get video duration for progress calculation
+        video_duration = await get_video_duration(dl)
+        
+        # Run FFmpeg with progress output
+        # Add -progress pipe:1 to get progress info on stdout
+        progress_cmd = cmd.replace('ffmpeg ', 'ffmpeg -progress pipe:1 -stats_period 2 ')
+        
+        process = await asyncio.create_subprocess_shell(
+            progress_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Track encoding progress
+        encoding_start = time.time()
+        last_update = 0
+        current_time_us = 0
+        total_duration_us = int(video_duration * 1000000) if video_duration else 0
+        
+        async def update_progress():
+            nonlocal last_update, current_time_us
+            now = time.time()
+            
+            # Update every 3 seconds to avoid flood
+            if now - last_update < 3:
+                return
+            last_update = now
+            
+            if total_duration_us > 0 and current_time_us > 0:
+                percentage = min(100, (current_time_us / total_duration_us) * 100)
+                elapsed = now - encoding_start
+                speed = current_time_us / elapsed / 1000000 if elapsed > 0 else 0
+                remaining_us = total_duration_us - current_time_us
+                eta_seconds = remaining_us / 1000000 / speed if speed > 0 else 0
+                
+                # Create visual progress bar
+                filled = int(percentage / 5)
+                bar = "█" * filled + "░" * (20 - filled)
+                
+                eta_str = ts(int(eta_seconds * 1000)) if eta_seconds > 0 else "calculating..."
+                
+                progress_text = (
+                    f"🔄 **ENCODING IN PROGRESS**\n\n"
+                    f"`[{bar}] {percentage:.1f}%`\n\n"
+                    f"⏱️ Elapsed: `{ts(int(elapsed * 1000))}`\n"
+                    f"⏳ ETA: `{eta_str}`\n"
+                    f"🚀 Speed: `{speed:.2f}x`\n"
+                    f"🎬 Codec: `{v_codec}`"
+                )
+                
+                try:
+                    await event.edit(
+                        progress_text,
+                        buttons=[[Button.inline("📊 STATS", data=f"stats{wah}"), Button.inline("❌ CANCEL", data=f"skip{wah}")]]
+                    )
+                except Exception:
+                    pass  # Ignore update errors
+        
+        # Read stdout for progress info
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            
+            line_str = line.decode('utf-8', errors='ignore').strip()
+            
+            # Parse out_time_us from progress output
+            if line_str.startswith('out_time_us='):
+                try:
+                    current_time_us = int(line_str.split('=')[1])
+                    await update_progress()
+                except ValueError:
+                    pass
+            elif line_str == 'progress=end':
+                break
+        
+        # Wait for process to complete
         _, stderr = await process.communicate()
         
         stderr_output = stderr.decode(errors='ignore')
