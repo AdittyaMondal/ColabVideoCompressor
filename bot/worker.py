@@ -125,6 +125,16 @@ async def process_compression(event, dl, start_time, user_id: int):
         v_fps = compression_settings.get("v_fps", 30)
         a_bitrate = compression_settings.get("a_bitrate", "192k")
 
+        # Adjust profile based on codec - x265 uses different profile names than x264
+        is_x265 = 'x265' in v_codec or 'hevc' in v_codec.lower()
+        if is_x265:
+            # x265 valid profiles: main, main10, main-intra, main10-intra, etc.
+            # Convert x264-style profiles to x265 equivalents
+            if v_profile in ['high', 'high10', 'high422', 'high444']:
+                v_profile = 'main10' if '10' in v_profile else 'main'
+            elif v_profile not in ['main', 'main10', 'main-intra', 'main10-intra', 'main444-8', 'main444-10']:
+                v_profile = 'main'  # Default to main for x265
+
         # Input options (before -i)
         if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
             cmd_parts.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
@@ -161,14 +171,20 @@ async def process_compression(event, dl, start_time, user_id: int):
 
         # Encoding parameters with custom settings
         cmd_parts.extend([
-            '-c:v', v_codec,          # libx265
-            '-preset', v_preset,      # p3
-            '-profile:v', v_profile,  # high
-            '-level:v', v_level,
-            '-crf', str(v_qp),        # 26
-            '-r', str(v_fps),         # 120
+            '-c:v', v_codec,
+            '-preset', v_preset,
+            '-profile:v', v_profile,
+        ])
+        
+        # Add level only for non-x265 codecs (x265 auto-selects appropriate level)
+        if not is_x265:
+            cmd_parts.extend(['-level:v', v_level])
+        
+        cmd_parts.extend([
+            '-crf', str(v_qp),
+            '-r', str(v_fps),
             '-c:a', 'aac',
-            '-b:a', a_bitrate,        # 384k
+            '-b:a', a_bitrate,
             '-movflags', '+faststart',
             f'"{out}"'
         ])
