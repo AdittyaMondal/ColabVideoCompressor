@@ -18,14 +18,26 @@ class SettingsManager:
         return {
             # Compression Presets
             "compression_presets": {
+                # H.264 CPU Presets
                 "ultra_fast": {"v_codec": "libx264", "v_preset": "ultrafast", "v_qp": 35, "v_scale": 720},
                 "fast": {"v_codec": "libx264", "v_preset": "fast", "v_qp": 28, "v_scale": 1080},
                 "balanced": {"v_codec": "libx264", "v_preset": "medium", "v_qp": 26, "v_scale": 1080},
                 "quality": {"v_codec": "libx264", "v_preset": "slow", "v_qp": 22, "v_scale": 1080},
                 "high_quality": {"v_codec": "libx264", "v_preset": "veryslow", "v_qp": 18, "v_scale": 1080},
+                # H.264 NVIDIA Presets
                 "nvidia_fast": {"v_codec": "h264_nvenc", "v_preset": "p1", "v_qp": 28, "v_scale": 1080},
                 "nvidia_balanced": {"v_codec": "h264_nvenc", "v_preset": "p3", "v_qp": 26, "v_scale": 1080},
                 "nvidia_quality": {"v_codec": "h264_nvenc", "v_preset": "p6", "v_qp": 22, "v_scale": 1080},
+                # HEVC (H.265) CPU Presets - Aggressive compression for max file size reduction
+                "hevc_fast": {"v_codec": "libx265", "v_preset": "fast", "v_qp": 30, "v_scale": 720, "v_profile": "main"},
+                "hevc_balanced": {"v_codec": "libx265", "v_preset": "medium", "v_qp": 28, "v_scale": 1080, "v_profile": "main"},
+                "hevc_quality": {"v_codec": "libx265", "v_preset": "slow", "v_qp": 24, "v_scale": 1080, "v_profile": "main"},
+                "hevc_max_compress": {"v_codec": "libx265", "v_preset": "slower", "v_qp": 32, "v_scale": 720, "v_profile": "main"},
+                # HEVC NVIDIA Presets - Hardware accelerated H.265
+                "nvidia_hevc_fast": {"v_codec": "hevc_nvenc", "v_preset": "p2", "v_qp": 30, "v_scale": 720, "v_profile": "main"},
+                "nvidia_hevc_balanced": {"v_codec": "hevc_nvenc", "v_preset": "p4", "v_qp": 28, "v_scale": 1080, "v_profile": "main"},
+                "nvidia_hevc_quality": {"v_codec": "hevc_nvenc", "v_preset": "p6", "v_qp": 24, "v_scale": 1080, "v_profile": "main"},
+                "nvidia_hevc_max_compress": {"v_codec": "hevc_nvenc", "v_preset": "p5", "v_qp": 32, "v_scale": 720, "v_profile": "main"},
             },
             
             # Current Active Settings
@@ -204,22 +216,39 @@ class SettingsManager:
         """Get available compression presets with descriptions"""
         presets = self.get_setting("compression_presets")
         descriptions = {
-            "ultra_fast": "🚀 Ultra Fast - Fastest compression, larger file size",
-            "fast": "⚡ Fast - Quick compression, good quality",
-            "balanced": "⚖️ Balanced - Good balance of speed and quality",
-            "quality": "🎯 Quality - Better quality, slower compression",
-            "high_quality": "💎 High Quality - Best quality, slowest compression",
-            "nvidia_fast": "🚀 NVIDIA Fast - Hardware accelerated, fast",
-            "nvidia_balanced": "⚖️ NVIDIA Balanced - Hardware accelerated, balanced",
-            "nvidia_quality": "💎 NVIDIA Quality - Hardware accelerated, high quality",
+            # H.264 CPU
+            "ultra_fast": "🚀 Ultra Fast - Fastest H.264, larger file",
+            "fast": "⚡ Fast - Quick H.264, good quality",
+            "balanced": "⚖️ Balanced - H.264 speed/quality balance",
+            "quality": "🎯 Quality - H.264 better quality",
+            "high_quality": "💎 High Quality - H.264 best quality",
+            # H.264 NVIDIA
+            "nvidia_fast": "🚀 NVIDIA H.264 Fast",
+            "nvidia_balanced": "⚖️ NVIDIA H.264 Balanced",
+            "nvidia_quality": "💎 NVIDIA H.264 Quality",
+            # HEVC CPU
+            "hevc_fast": "🟢 HEVC Fast - Quick H.265 compression",
+            "hevc_balanced": "🟢 HEVC Balanced - H.265 balanced",
+            "hevc_quality": "🟢 HEVC Quality - H.265 high quality",
+            "hevc_max_compress": "🟢 HEVC Max Compress - Smallest file",
+            # HEVC NVIDIA
+            "nvidia_hevc_fast": "🟣 NVIDIA HEVC Fast",
+            "nvidia_hevc_balanced": "🟣 NVIDIA HEVC Balanced",
+            "nvidia_hevc_quality": "🟣 NVIDIA HEVC Quality",
+            "nvidia_hevc_max_compress": "🟣 NVIDIA HEVC Max Compress",
+            # Custom
             "custom": "🔧 Custom - User-defined settings"
         }
         
         available = {}
         for preset in presets.keys():
+            # Filter out NVIDIA presets if not on NVIDIA GPU
             if preset.startswith("nvidia") and GPU_TYPE != "nvidia":
                 continue
-            available[preset] = descriptions.get(preset, f"📋 {preset.title()}")
+            # Filter out CPU HEVC presets if on NVIDIA (prefer nvidia_hevc)
+            if preset.startswith("hevc_") and GPU_TYPE == "nvidia":
+                continue
+            available[preset] = descriptions.get(preset, f"📋 {preset.replace('_', ' ').title()}")
         
         available["custom"] = descriptions["custom"]
         return available
