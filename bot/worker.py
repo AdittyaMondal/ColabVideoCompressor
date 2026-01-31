@@ -144,8 +144,14 @@ async def process_compression(event, dl, start_time, user_id: int):
             watermark_filter = get_watermark_filter(user_id)
             if watermark_filter:  # Only add if watermark filter is valid
                 if GPU_TYPE == "nvidia" and enable_hardware_acceleration and is_hardware_codec:
-                    # For hardware acceleration, we need to download from GPU, apply watermark, then upload back
-                    filters.append(f'hwdownload,format=nv12,{watermark_filter},hwupload_cuda')
+                    # For hardware acceleration with watermark:
+                    # 1. Download from GPU to system memory
+                    # 2. Convert to nv12 format for software processing
+                    # 3. Apply watermark (software filter)
+                    # 4. Upload back to GPU
+                    # Note: When using hwupload after software filters, we need to NOT use hwupload_cuda
+                    # because the encoder can accept system memory input. This avoids format conversion issues.
+                    filters.append(f'hwdownload,format=nv12,{watermark_filter}')
                 else:
                     # For software encoding, apply watermark directly
                     filters.append(watermark_filter)
