@@ -1,6 +1,6 @@
 import asyncio
 import re
-from telethon import Button, events
+from telethon import Button, events, errors
 from .settings import settings_manager
 from .settings_menu import settings_menu
 from .config import LOGS, OWNER
@@ -13,6 +13,14 @@ class SettingsHandlers:
         self.settings_menu = settings_menu
         self.waiting_for_input = {}  # Track users waiting for text input
     
+    async def safe_edit(self, event, text, buttons=None):
+        """Safely edit a message, ignoring MessageNotModifiedError"""
+        try:
+            await event.edit(text, buttons=buttons)
+        except errors.MessageNotModifiedError:
+            pass  # Content is the same, ignore
+        except Exception as e:
+            LOGS.warning(f"Error editing message: {e}")
     async def handle_settings_callback(self, event):
         """Handle settings callback queries"""
         user_id = event.sender_id
@@ -131,7 +139,7 @@ class SettingsHandlers:
         
         buttons.append([Button.inline("🔙 Back", data="settings_custom")])
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_preset_selection(self, event, user_id: int):
         """Show encoder preset selection (speed vs quality tradeoff)"""
@@ -166,7 +174,7 @@ class SettingsHandlers:
         
         buttons.append([Button.inline("🔙 Back", data="settings_custom")])
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_resolution_selection(self, event, user_id: int):
         """Show resolution selection"""
@@ -181,7 +189,7 @@ class SettingsHandlers:
             [Button.inline("🔙 Back", data="settings_custom")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_audio_bitrate_selection(self, event, user_id: int):
         """Show audio bitrate selection"""
@@ -196,7 +204,7 @@ class SettingsHandlers:
             [Button.inline("🔙 Back", data="settings_custom")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def toggle_hardware_acceleration(self, event, user_id: int):
         """Toggle hardware acceleration"""
@@ -396,7 +404,7 @@ class SettingsHandlers:
             [Button.inline("❌ Cancel", data="settings_main")]
         ]
 
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
 
     async def handle_codec_setting(self, event, user_id: int, data: str):
         """Handle codec selection"""
@@ -551,7 +559,7 @@ class SettingsHandlers:
             [Button.inline("🔙 Back", data="settings_advanced")]
         ]
 
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
 
     async def handle_watermark_position(self, event, user_id: int, data: str):
         """Handle watermark position selection"""

@@ -1,5 +1,5 @@
 import asyncio
-from telethon import Button
+from telethon import Button, errors
 from .settings import settings_manager
 from .config import LOGS, OWNER, GPU_TYPE
 
@@ -9,6 +9,14 @@ class SettingsMenu:
     def __init__(self):
         self.settings_manager = settings_manager
     
+    async def safe_edit(self, event, text, buttons=None):
+        """Safely edit a message, ignoring MessageNotModifiedError"""
+        try:
+            await event.edit(text, buttons=buttons)
+        except errors.MessageNotModifiedError:
+            pass  # Content is the same, ignore
+        except Exception as e:
+            LOGS.warning(f"Error editing message: {e}")
     async def show_main_menu(self, event, user_id: int):
         """Show the main settings menu"""
         try:
@@ -61,7 +69,7 @@ class SettingsMenu:
             # Check if this is a callback query (has edit method) or new message
             if hasattr(event, 'edit') and callable(getattr(event, 'edit', None)):
                 LOGS.info("Editing existing message with settings menu")
-                await event.edit(menu_text, buttons=buttons)
+                await self.safe_edit(event, menu_text, buttons)
             elif hasattr(event, 'reply') and callable(getattr(event, 'reply', None)):
                 # For new messages, use reply
                 LOGS.info("Replying with new settings menu message")
@@ -70,7 +78,7 @@ class SettingsMenu:
                 # Fallback - try to send as edit first, then reply
                 LOGS.warning("Unknown event type, trying edit first")
                 try:
-                    await event.edit(menu_text, buttons=buttons)
+                    await self.safe_edit(event, menu_text, buttons)
                 except Exception as edit_error:
                     LOGS.warning(f"Edit failed: {edit_error}, trying reply")
                     await event.reply(menu_text, buttons=buttons)
@@ -102,7 +110,7 @@ class SettingsMenu:
         
         buttons.append([Button.inline("🔙 Back to Settings", data="settings_main")])
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_custom_compression(self, event, user_id: int):
         """Show custom compression settings menu"""
@@ -132,7 +140,7 @@ class SettingsMenu:
             [Button.inline("🔙 Back to Settings", data="settings_main")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_output_settings(self, event, user_id: int):
         """Show output settings menu"""
@@ -159,7 +167,7 @@ class SettingsMenu:
             [Button.inline("🔙 Back to Settings", data="settings_main")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_preview_settings(self, event, user_id: int):
         """Show preview and screenshot settings menu"""
@@ -184,7 +192,7 @@ class SettingsMenu:
             [Button.inline("🔙 Back to Settings", data="settings_main")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_advanced_settings(self, event, user_id: int):
         """Show advanced settings menu"""
@@ -209,7 +217,7 @@ class SettingsMenu:
             [Button.inline("🔙 Back to Settings", data="settings_main")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_thumbnail_settings(self, event, user_id: int):
         """Show thumbnail settings menu"""
@@ -235,7 +243,7 @@ class SettingsMenu:
             [Button.inline("🔙 Back to Settings", data="settings_main")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
     
     async def show_current_settings(self, event, user_id: int):
         """Show current active settings summary"""
@@ -263,7 +271,7 @@ class SettingsMenu:
             [Button.inline("🔙 Back to Settings", data="settings_main")]
         ]
         
-        await event.edit(menu_text, buttons=buttons)
+        await self.safe_edit(event, menu_text, buttons)
 
 # Global settings menu instance
 settings_menu = SettingsMenu()
