@@ -38,6 +38,15 @@ class SettingsManager:
                 "nvidia_hevc_balanced": {"v_codec": "hevc_nvenc", "v_preset": "p4", "v_qp": 28, "v_scale": 1080, "v_profile": "main"},
                 "nvidia_hevc_quality": {"v_codec": "hevc_nvenc", "v_preset": "p6", "v_qp": 24, "v_scale": 1080, "v_profile": "main"},
                 "nvidia_hevc_max_compress": {"v_codec": "hevc_nvenc", "v_preset": "p5", "v_qp": 32, "v_scale": 720, "v_profile": "main"},
+                # Professional HEVC Presets - HandBrake/x265 style (from MediaInfo)
+                "hevc_pro_1080p": {
+                    "v_codec": "libx265", "v_preset": "medium", "v_qp": 24, "v_scale": 1080, "v_profile": "main",
+                    "x265_params": "bframes=4:b-adapt=2:ref=3:rc-lookahead=20:aq-mode=2:aq-strength=1.0:psy-rd=2.0:strong-intra-smoothing=1:sao=1:cutree=1"
+                },
+                "hevc_pro_720p": {
+                    "v_codec": "libx265", "v_preset": "medium", "v_qp": 23, "v_scale": 720, "v_profile": "main",
+                    "x265_params": "bframes=4:b-adapt=2:ref=3:rc-lookahead=20:aq-mode=2:aq-strength=1.0:psy-rd=2.0:strong-intra-smoothing=1:sao=1:cutree=1"
+                },
             },
             
             # Current Active Settings
@@ -231,6 +240,9 @@ class SettingsManager:
             "hevc_balanced": "🟢 HEVC Balanced - H.265 balanced",
             "hevc_quality": "🟢 HEVC Quality - H.265 high quality",
             "hevc_max_compress": "🟢 HEVC Max Compress - Smallest file",
+            # HEVC Pro (HandBrake style)
+            "hevc_pro_1080p": "⭐ HEVC Pro 1080p - Best Quality (CRF 24)",
+            "hevc_pro_720p": "⭐ HEVC Pro 720p - Best Quality (CRF 23)",
             # HEVC NVIDIA
             "nvidia_hevc_fast": "🟣 NVIDIA HEVC Fast",
             "nvidia_hevc_balanced": "🟣 NVIDIA HEVC Balanced",
@@ -244,9 +256,6 @@ class SettingsManager:
         for preset in presets.keys():
             # Filter out NVIDIA presets if not on NVIDIA GPU
             if preset.startswith("nvidia") and GPU_TYPE != "nvidia":
-                continue
-            # Filter out CPU HEVC presets if on NVIDIA (prefer nvidia_hevc)
-            if preset.startswith("hevc_") and GPU_TYPE == "nvidia":
                 continue
             available[preset] = descriptions.get(preset, f"📋 {preset.replace('_', ' ').title()}")
         

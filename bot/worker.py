@@ -123,7 +123,8 @@ async def process_compression(event, dl, start_time, user_id: int):
         v_level = compression_settings.get("v_level", "4.0")
         v_qp = compression_settings.get("v_qp", 26)
         v_fps = compression_settings.get("v_fps", 30)
-        a_bitrate = compression_settings.get("a_bitrate", "192k")
+        a_bitrate = compression_settings.get("a_bitrate", "128k")
+        x265_params = compression_settings.get("x265_params", "")
 
         # Adjust profile based on codec - x265 uses different profile names than x264
         is_x265 = 'x265' in v_codec or 'hevc' in v_codec.lower()
@@ -167,6 +168,10 @@ async def process_compression(event, dl, start_time, user_id: int):
         # Add level only for non-x265 codecs (x265 auto-selects appropriate level)
         if not is_x265:
             cmd_parts.extend(['-level:v', v_level])
+        
+        # Add x265-params for professional HEVC encoding (from MediaInfo/HandBrake style)
+        if is_x265 and x265_params and 'libx265' in v_codec:
+            cmd_parts.extend(['-x265-params', f'"{x265_params}"'])
         
         cmd_parts.extend([
             '-crf', str(v_qp),
